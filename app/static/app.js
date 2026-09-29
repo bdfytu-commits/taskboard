@@ -1096,8 +1096,9 @@ function renderAdminUsers() {
   for (const u of users) {
     const isAdmin = u.role === "admin";
     const me = state.user && u.username === state.user.username;
+    const owner = u.username.toLowerCase() === "admin";
     const actions = [];
-    if (!me) {
+    if (!me && !owner) {
       actions.push(el("button", {
         class: "btn ghost sm",
         text: isAdmin ? "Убрать админа" : "Сделать админом",
@@ -1113,7 +1114,7 @@ function renderAdminUsers() {
           } catch (err) { toast(err.message); }
         },
       }));
-      actions.push(el("button", {
+      if (!isAdmin) actions.push(el("button", {
         class: "btn danger ghost sm",
         text: "Удалить",
         onclick: async (e) => {
@@ -1121,12 +1122,12 @@ function renderAdminUsers() {
           const ok = await confirmDialog(
             "Удалить аккаунт?",
             `Пользователь ${u.username} и все его доски, задачи и комментарии
-             будут удалены безвозвратно.`,
+             будут удалены безвозвратно (данные сохранятся в резервную копию).`,
           );
           if (!ok) return;
           try {
-            await api(`/api/admin/users/${u.id}`, { method: "DELETE" });
-            toast(`${u.username} удалён`, true);
+            const res = await api(`/api/admin/users/${u.id}`, { method: "DELETE" });
+            toast(`${u.username} удалён · копия: ${res.backup || "—"}`, true);
             $("#admin-detail").hidden = true;
             refreshAdmin();
           } catch (err) { toast(err.message); }

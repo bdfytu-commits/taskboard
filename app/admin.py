@@ -14,6 +14,13 @@ PRIORITIES = ("low", "medium", "high", "urgent")
 MAX_USER_BOARDS = 100
 MAX_BOARD_TASKS = 500
 MAX_SEARCH = 200
+# Владелец сервиса: его аккаунт нельзя удалить и нельзя трогать роль —
+# даже другому администратору (страховка от «шуток» с админкой).
+OWNER_USERNAME = "admin"
+
+
+def is_owner(row) -> bool:
+    return row["username"].lower() == OWNER_USERNAME
 
 
 def _count(sql: str, *params) -> int:
@@ -78,13 +85,21 @@ def users():
 @bp.get("/users/<int:user_id>")
 @admin_required
 def user_detail(user_id):
+    data = user_detail_impl(user_id)
+    if data is None:
+        return jsonify(error="Пользователь не найден"), 404
+    return jsonify(**data)
+
+
+def user_detail_impl(user_id) -> dict | None:
+    """Полная сводка аккаунта: доски -> колонки -> задачи с чеклистами."""
     db = get_db()
     user = db.execute(
         "SELECT id, username, role, created_at FROM users WHERE id = ?",
         (user_id,),
     ).fetchone()
     if user is None:
-        return jsonify(error="Пользователь не найден"), 404
+        return None
 
     boards = db.execute(
         """SELECT id, name, color, created_at,
@@ -159,7 +174,7 @@ def user_detail(user_id):
         ),
         comments=_count("SELECT COUNT(*) AS n FROM comments WHERE user_id = ?", user_id),
     )
-    return jsonify(user=stats, boards=result)
+    return {"user": stats, "boards": result}
 
 
 @bp.get("/tasks/<int:task_id>")
@@ -249,13 +264,45 @@ def set_role(user_id):
 
     db = get_db()
     user = db.execute(
-        "SELECT id, username FROM users WHERE id = ?", (user_id,)
+        "SELECT id, username, role FROM users WHERE id = ?", (user_id,)
     ).fetchone()
     if user is None:
         return jsonify(error="Пользователь не найден"), 404
+    if is_owner(user):
+        return jsonify(error="Аккаунт владельца защищён — роль изменить нельзя"), 400
+
+    # последнего администратора нельзя понизить — иначе админка останется без доступа
+    if user["role"] == "admin" and role == "user":
+        admins = db.execute(
+            "SELECT COUNT(*) AS n FROM users WHERE role = 'admin'"
+        ).fetchone()["n"]
+        if admins <= 1:
+            return jsonify(
+                error="Нельзя снять роль с последнего администратора"
+            ), 400
+
     db.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
     db.commit()
     return jsonify(ok=True, user_id=user_id, username=user["username"], role=role)
+
+
+def _backup_user(user, user_id: int) -> str | None:
+    """Сохраняет полный дамп аккаунта перед удалением — чтобы можно было вернуть."""
+    import json
+    from datetime import datetime
+    from pathlib import Path
+
+    from flask import current_app
+
+    detail = user_detail_impl(user_id)
+    folder = Path(current_app.instance_path) / "backups"
+    folder.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = folder / f"user-{user_id}-{user['username']}-{stamp}.json"
+    path.write_text(
+        json.dumps(detail, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return str(path)
 
 
 @bp.delete("/users/<int:user_id>")
@@ -266,10 +313,28 @@ def delete_user(user_id):
 
     db = get_db()
     user = db.execute(
-        "SELECT id, username FROM users WHERE id = ?", (user_id,)
+        "SELECT id, username, role FROM users WHERE id = ?", (user_id,)
     ).fetchone()
     if user is None:
         return jsonify(error="Пользователь не найден"), 404
+
+    # аккаунт владельца — под защитой, даже для другого администратора
+    if is_owner(user):
+        return jsonify(error="Аккаунт владельца удалить нельзя"), 400
+
+    # аккаунты администраторов под защитой: сначала снимите роль
+    if user["role"] == "admin":
+        return jsonify(
+            error="Нельзя удалить аккаунт администратора — сначала снимите с него роль"
+        ), 400
+
+    backup = _backup_user(user, user_id)
     db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     db.commit()
-    return jsonify(ok=True, user_id=user_id, username=user["username"])
+    return jsonify(
+        ok=True,
+        user_id=user_id,
+        username=user["username"],
+        backup=backup,
+        notice="Данные сохранены в резервную копию перед удалением",
+    )

@@ -237,3 +237,58 @@ def test_admin_task_detail_marks_finished(admin_api, authed_api, board):
     t = admin_api.get(f"/api/admin/tasks/{task['id']}").get_json()["task"]
     assert t["finished"] is True
     assert t["column_name"] == "Готово"
+
+
+def test_owner_account_is_protected(app, admin_api):
+    """Аккаунт admin нельзя удалить и нельзя лишать роли — даже другому админу."""
+    from conftest import Api
+
+    owner_api = Api(app.test_client())
+    assert owner_api.register("admin", "owner-pass1").status_code == 201
+    owner_id = owner_api.get("/api/auth/me").get_json()["id"]
+    owner_api.logout()
+
+    res = admin_api.delete(f"/api/admin/users/{owner_id}")
+    assert res.status_code == 400
+    assert "владельца" in res.get_json()["error"]
+
+    res = admin_api.post(f"/api/admin/users/{owner_id}/role", json={"role": "user"})
+    assert res.status_code == 400
+    assert "владельца" in res.get_json()["error"]
+
+
+def test_admin_account_cannot_be_deleted(app, admin_api, authed_api):
+    """Аккаунт администратора не удаляется, пока с него не сняли роль."""
+    promote(app, "ivan")
+    ivan_id = authed_api.get("/api/auth/me").get_json()["id"]
+
+    res = admin_api.delete(f"/api/admin/users/{ivan_id}")
+    assert res.status_code == 400
+    assert "администратора" in res.get_json()["error"]
+
+    # сняли роль — теперь удалить можно
+    assert admin_api.post(
+        f"/api/admin/users/{ivan_id}/role", json={"role": "user"}
+    ).status_code == 200
+    assert admin_api.delete(f"/api/admin/users/{ivan_id}").status_code == 200
+
+
+def test_delete_writes_backup(admin_api, authed_api, board):
+    """Перед удалением аккаунта сохраняется JSON-копия всех его данных."""
+    import json
+    from pathlib import Path
+
+    authed_api.post(f"/api/boards/{board['id']}/tasks", json={"title": "Из задач"})
+    uid = authed_api.get("/api/auth/me").get_json()["id"]
+    authed_api.logout()
+
+    res = admin_api.delete(f"/api/admin/users/{uid}")
+    assert res.status_code == 200
+    backup = res.get_json()["backup"]
+    assert backup and Path(backup).exists()
+
+    data = json.loads(Path(backup).read_text(encoding="utf-8"))
+    assert data["user"]["username"] == "ivan"
+    assert data["user"]["tasks"] == 1
+    assert data["boards"][0]["name"] == "Проект X"
+    assert data["boards"][0]["columns"][0]["tasks"][0]["title"] == "Из задач"
