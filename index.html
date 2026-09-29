@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskBoard — демо</title>
+  <meta http-equiv="refresh" content="3; url=https://taskboard-ivan.loca.lt">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      font: 16px/1.6 -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #6366f133, transparent),
+                  radial-gradient(900px 500px at 100% 10%, #ec489922, transparent),
+                  #0b1020;
+      color: #e7ecff; padding: 24px;
+    }
+    .card {
+      width: min(560px, 100%); background: #12182e; border: 1px solid #26304f;
+      border-radius: 20px; padding: 32px; box-shadow: 0 30px 60px -30px #000;
+    }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    p { margin: 8px 0; color: #a9b4d6; }
+    a.btn {
+      display: inline-block; margin-top: 18px; padding: 13px 22px; border-radius: 12px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff;
+      text-decoration: none; font-weight: 600;
+    }
+    code {
+      background: #0b1020; border: 1px solid #26304f; padding: 2px 7px;
+      border-radius: 7px; color: #8ef0c0;
+    }
+    .creds { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 18px; }
+    .cred { background: #0e1430; border: 1px solid #26304f; border-radius: 12px; padding: 12px 14px; }
+    .cred b { display: block; font-size: 13px; color: #7f8bb3; text-transform: uppercase; letter-spacing: .06em; }
+    .note { font-size: 13px; color: #7f8bb3; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🗂️ TaskBoard</h1>
+    <p>Канбан-доски с drag &amp; drop, чеклистами, сроками, комментариями,
+       статистикой, тёмной темой и админ-панелью.</p>
+    <a class="btn" href="https://taskboard-ivan.loca.lt" id="go">Открыть приложение →</a>
+    <div class="creds">
+      <div class="cred"><b>Демо-аккаунт</b><code>demo / demo1234</code></div>
+      <div class="cred"><b>Админ</b><code>admin / admin1234</code></div>
+    </div>
+    <p class="note">Страница откроет приложение автоматически через 3 секунды.
+       Прямая ссылка: <code>https://taskboard-ivan.loca.lt</code> ·
+       исходники: <a href="https://github.com/bdfytu-commits/taskboard" style="color:#9db2ff">GitHub</a></p>
+  </div>
+  <script>setTimeout(() => location.replace("https://taskboard-ivan.loca.lt"), 1500);</script>
+</body>
+</html>
