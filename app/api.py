@@ -537,6 +537,79 @@ def delete_task(task_id):
     return jsonify(ok=True)
 
 
+# --------------------------------------------------------------------------- export
+PRIORITY_RU = {"urgent": "срочный", "high": "высокий", "medium": "средний", "low": "низкий"}
+
+
+def board_markdown(board, columns, tasks) -> str:
+    by_column: dict[int, list[dict]] = {}
+    for t in tasks:
+        by_column.setdefault(t["column_id"], []).append(t)
+
+    lines = [
+        f"# {board['name']}",
+        "",
+        f"_TaskBoard · экспортировано {date.today().isoformat()} · "
+        f"задач: {len(tasks)} · колонок: {len(columns)}_",
+        "",
+    ]
+    for col in columns:
+        items = by_column.get(col["id"], [])
+        lines.append(f"## {col['name']} ({len(items)})")
+        lines.append("")
+        if not items:
+            lines += ["_пусто_", ""]
+            continue
+        for t in items:
+            due = f" 📅 {t['due_date']}" if t["due_date"] else ""
+            prio = PRIORITY_RU.get(t["priority"], t["priority"])
+            tags = " ".join(f"`#{tag}`" for tag in t["tags"])
+            head = f"- [ ] **{t['title']}** · {prio}{due}"
+            lines.append(f"{head} {tags}".rstrip())
+            if t["description"]:
+                lines.extend(f"  > {ln}" for ln in t["description"].splitlines())
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@api.get("/boards/<int:board_id>/export")
+@login_required
+def export_board(board_id):
+    """Выгрузка доски: ``?format=json`` (полный дамп) или ``?format=md``."""
+    board = get_board_or_404(board_id)
+    if board is None:
+        return bad("Доска не найдена", 404)
+
+    fmt = request.args.get("format", "json")
+    if fmt not in ("json", "md"):
+        return bad("format должен быть json или md")
+
+    columns = load_columns(board_id)
+    tasks = load_tasks(board_id)
+    by_column: dict[int, list[dict]] = {}
+    for t in tasks:
+        by_column.setdefault(t["column_id"], []).append(t)
+
+    if fmt == "json":
+        payload = dict(board)
+        payload["columns"] = [
+            {**c, "tasks": by_column.get(c["id"], [])} for c in columns
+        ]
+        payload["exported_at"] = date.today().isoformat()
+        return jsonify(payload), 200, {
+            "Content-Disposition": f'attachment; filename="board-{board_id}.json"'
+        }
+
+    from flask import Response
+
+    md = board_markdown(board, columns, tasks)
+    return Response(
+        md,
+        mimetype="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="board-{board_id}.md"'},
+    )
+
+
 # --------------------------------------------------------------------------- tags / search / stats
 @api.get("/tags")
 @login_required

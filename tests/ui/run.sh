@@ -4,7 +4,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
-PY=.venv/bin/python
+PY="${PY:-.venv/bin/python}"
+[ -x "$PY" ] || PY=python3   # в CI виртуального окружения нет
 
 # свежая база на каждый прогон — тест идемпотентен
 pkill -f "[p]ython run\.py" 2>/dev/null || true

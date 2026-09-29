@@ -7,10 +7,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import pytest
 
 from app import create_app
+from app.auth import limiter
 
 
 @pytest.fixture
 def app(tmp_path):
+    limiter.clear()  # rate-limit состояние не должно протекать между тестами
     application = create_app(
         {
             "TESTING": True,
@@ -20,6 +22,7 @@ def app(tmp_path):
         }
     )
     yield application
+    limiter.clear()
 
 
 @pytest.fixture

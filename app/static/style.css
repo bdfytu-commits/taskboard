@@ -168,6 +168,7 @@ form label input, form label select, form label textarea { margin-top: 5px; colo
 .board-list .del:hover { color: var(--danger); }
 
 .side-footer { margin-top: auto; display: grid; gap: 8px; }
+.hints { font-size: 11px; line-height: 1.5; opacity: .75; }
 
 .main { display: flex; flex-direction: column; min-width: 0; }
 .topbar {
@@ -214,6 +215,9 @@ form label input, form label select, form label textarea { margin-top: 5px; colo
   max-height: 100%;
 }
 .column.drop-target { border-color: var(--accent); }
+.column.dragging-col { opacity: .45; }
+.col-head[draggable="true"] { cursor: grab; }
+.col-head[draggable="true"]:active { cursor: grabbing; }
 .col-head {
   display: flex;
   align-items: center;

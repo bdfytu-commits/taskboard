@@ -48,6 +48,7 @@
 
       <div class="side-footer">
         <div id="whoami" class="muted"></div>
+        <div class="muted hints">/ — поиск · N — задача · колонки и карточки перетаскиваются</div>
         <button id="logout-btn" class="btn ghost block">Выйти</button>
       </div>
     </aside>
@@ -66,6 +67,11 @@
             <option value="low">🟢 Низкий</option>
           </select>
           <button id="stats-btn" class="btn ghost" title="Статистика доски">📊 Статистика</button>
+          <select id="export" class="input" title="Экспорт доски">
+            <option value="">Экспорт…</option>
+            <option value="md">Markdown (.md)</option>
+            <option value="json">JSON (.json)</option>
+          </select>
           <button id="add-column-btn" class="btn ghost" title="Добавить колонку">＋ Колонка</button>
           <button id="add-task-btn" class="btn primary" title="Добавить задачу">＋ Задача</button>
         </div>

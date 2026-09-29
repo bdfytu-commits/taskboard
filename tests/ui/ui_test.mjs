@@ -137,7 +137,52 @@ try {
   await page.screenshot({ path: `${OUT}/05-stats.png` });
   await page.keyboard.press("Escape");
 
-  // 9. Чистая консоль
+  // 9. Порядок колонок перетаскиванием заголовка
+  const colTitles = () => page.locator(".column .col-head .title").allTextContents();
+  const before = (await colTitles())[0];
+  await page
+    .locator(".column")
+    .nth(0)
+    .locator(".col-head")
+    .dragTo(page.locator(".column").nth(1).locator(".col-head"));
+  await page.waitForFunction(
+    (prev) => {
+      const t = document.querySelector(".column .col-head .title");
+      return t && t.textContent.trim() !== prev;
+    },
+    before,
+    { timeout: 5000 },
+  );
+  const afterCol = (await colTitles())[0];
+  log("перетаскивание колонки", afterCol !== before, `${before} → ${afterCol}`);
+  await page.screenshot({ path: `${OUT}/06-column-dnd.png` });
+
+  // 10. Экспорт доски в Markdown
+  const md = await page.evaluate(async () => {
+    const list = await (await fetch("/api/boards")).json();
+    const id = list.boards[0].id;
+    const r = await fetch(`/api/boards/${id}/export?format=md`);
+    return { ok: r.ok, text: r.ok ? await r.text() : "" };
+  });
+  log(
+    "экспорт в Markdown",
+    md.ok && md.text.startsWith("# ") && md.text.includes("## "),
+    md.text.split("\n")[0],
+  );
+
+  // 11. Горячие клавиши
+  await page.keyboard.press("/");
+  const searchFocused = await page.evaluate(
+    () => document.activeElement && document.activeElement.id === "search",
+  );
+  log("клавиша / фокусирует поиск", searchFocused === true);
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press("n");
+  const modalOpen = await page.isVisible("#task-modal");
+  log("клавиша n открывает задачу", modalOpen);
+  await page.keyboard.press("Escape");
+
+  // 12. Чистая консоль
   log("консоль без ошибок", errors.length === 0, errors.slice(0, 3).join(" | "));
 } catch (e) {
   log("исключение", false, String(e).slice(0, 300));

@@ -280,6 +280,7 @@ function renderBoard() {
     ]);
 
     const column = el("div", { class: "column", dataset: { columnId: String(col.id) } }, [head, body]);
+    setupColumnDrag(head, column, col);
     setupDropZone(body, column);
     wrap.append(column);
   }
@@ -361,13 +362,78 @@ function setupDropZone(body, column) {
   });
   body.addEventListener("drop", async (e) => {
     e.preventDefault();
-    const id = Number(e.dataTransfer.getData("text/plain"));
+    const raw = e.dataTransfer.getData("text/plain");
     clearDropHints();
+    if (raw.startsWith("col:")) {
+      // колонку бросили на тело другой колонки — ставим перед ней
+      const srcId = Number(raw.slice(4));
+      const targetId = Number(column.dataset.columnId);
+      if (srcId && targetId && srcId !== targetId) await moveColumn(srcId, targetId, false);
+      return;
+    }
+    const id = Number(raw);
     if (!id) return;
     const columnId = Number(body.dataset.columnId);
     const index = computeDropIndex(body, e.clientY);
     await moveTask(id, columnId, index);
   });
+}
+
+/* ------------------------------------------------------- перетаскивание колонок */
+function setupColumnDrag(head, column, col) {
+  head.draggable = "true";
+  head.title = "Перетащите, чтобы изменить порядок колонок · двойной клик — переименовать";
+
+  head.addEventListener("dragstart", (e) => {
+    e.dataTransfer.setData("text/plain", `col:${col.id}`);
+    e.dataTransfer.effectAllowed = "move";
+    requestAnimationFrame(() => column.classList.add("dragging-col"));
+  });
+  head.addEventListener("dragend", () => {
+    column.classList.remove("dragging-col");
+    clearDropHints();
+  });
+  head.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer.types.includes("text/plain")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    column.classList.add("drop-target");
+  });
+  head.addEventListener("dragleave", () => column.classList.remove("drop-target"));
+  head.addEventListener("drop", async (e) => {
+    const raw = e.dataTransfer.getData("text/plain");
+    if (!raw.startsWith("col:")) return; // карточки обрабатывает зона ниже
+    e.preventDefault();
+    e.stopPropagation();
+    column.classList.remove("drop-target");
+    const srcId = Number(raw.slice(4));
+    const targetId = Number(column.dataset.columnId);
+    if (!srcId || !targetId || srcId === targetId) return;
+    const rect = column.getBoundingClientRect();
+    const after = e.clientX > rect.left + rect.width / 2;
+    await moveColumn(srcId, targetId, after);
+  });
+}
+
+async function moveColumn(srcId, targetId, after) {
+  if (!state.board) return;
+  const cols = state.board.columns;
+  const from = cols.findIndex((c) => c.id === srcId);
+  if (from < 0) return;
+  const [col] = cols.splice(from, 1);
+  let to = cols.findIndex((c) => c.id === targetId);
+  if (to < 0) { cols.splice(from, 0, col); return; }
+  if (after) to += 1;
+  cols.splice(to, 0, col);
+  renderBoard();
+
+  try {
+    await api(`/api/columns/${srcId}`, { method: "PATCH", body: { position: to } });
+    await openBoard(state.board.id);  // канонический порядок с сервера
+  } catch (err) {
+    toast(err.message);
+    await openBoard(state.board.id);
+  }
 }
 
 async function moveTask(taskId, columnId, index) {
@@ -566,6 +632,50 @@ async function showStats() {
   } catch (err) { toast(err.message); }
 }
 
+/* ------------------------------------------------------------------ экспорт */
+async function exportBoard(e) {
+  const fmt = e.target.value;
+  e.target.value = "";
+  if (!fmt || !state.board) return;
+  try {
+    const res = await fetch(`/api/boards/${state.board.id}/export?format=${fmt}`);
+    if (!res.ok) {
+      let msg = `Ошибка ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch { /* не JSON */ }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: `board-${state.board.id}.${fmt}` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    toast(`Доска выгружена в ${fmt === "md" ? "Markdown" : "JSON"}`, true);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+/* ------------------------------------------------------------------ горячие клавиши */
+function setupShortcuts() {
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { closeModals(); return; }
+    const tag = (document.activeElement && document.activeElement.tagName) || "";
+    const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(tag);
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    if ($("#app-view").hidden) return;
+
+    if (e.key === "/") {
+      e.preventDefault();
+      $("#search").focus();
+    } else if (e.key.toLowerCase() === "n") {
+      e.preventDefault();
+      $("#add-task-btn").click();
+    }
+  });
+}
+
 /* ------------------------------------------------------------------ boot */
 async function boot() {
   await loadBoards();
@@ -576,6 +686,7 @@ async function boot() {
 async function start() {
   setupAuth();
   setupTaskModal();
+  setupShortcuts();
 
   $("#new-board-btn").addEventListener("click", createBoard);
   $("#add-column-btn").addEventListener("click", () => state.board ? addColumn() : toast("Сначала создайте доску"));
@@ -585,6 +696,7 @@ async function start() {
     openTaskModal(null, first ? first.id : null);
   });
   $("#stats-btn").addEventListener("click", showStats);
+  $("#export").addEventListener("change", exportBoard);
   $("#board-title").addEventListener("dblclick", renameBoard);
   $("#board-title").title = "Двойной клик — переименовать";
 

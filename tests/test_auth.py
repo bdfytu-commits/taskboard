@@ -60,3 +60,35 @@ def test_index_page_served(client):
     assert res.status_code == 200
     assert b"TaskBoard" in res.data
     assert b"/static/app.js" in res.data
+
+
+def test_login_rate_limited(api):
+    """После 10 неудачных попыток вход блокируется на окно (429)."""
+    api.register("frank", "secret123")
+    api.logout()
+
+    statuses = []
+    for _ in range(11):
+        statuses.append(api.login("frank", "wrong-pass").status_code)
+    assert statuses[:10] == [401] * 10
+    assert statuses[10] == 429
+
+    # даже с верным паролем вход пока закрыт
+    assert api.login("frank", "secret123").status_code == 429
+
+
+def test_successful_login_resets_counter(api):
+    api.register("grace", "secret123")
+    api.logout()
+    for _ in range(9):
+        assert api.login("grace", "nope").status_code == 401
+    assert api.login("grace", "secret123").status_code == 200
+    api.logout()
+    # счётчик обнулён — снова доступны неудачные попытки
+    assert api.login("grace", "nope").status_code == 401
+
+
+def test_register_spam_limited(api):
+    for _ in range(10):
+        assert api.register("bad name!", "secret123").status_code == 400
+    assert api.register("bad name!", "secret123").status_code == 429
