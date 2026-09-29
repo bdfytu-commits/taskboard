@@ -162,6 +162,42 @@ def user_detail(user_id):
     return jsonify(user=stats, boards=result)
 
 
+@bp.get("/tasks/<int:task_id>")
+@admin_required
+def task_detail(task_id):
+    """Полные параметры любой задачи: владелец, доска, чеклист, обсуждение."""
+    from .api import load_comments, task_subtasks, task_tags
+
+    row = get_db().execute(
+        """SELECT t.*, b.name AS board_name, b.color AS board_color,
+                  b.user_id AS owner_id, u.username AS owner,
+                  c.name AS column_name, c.position AS column_position,
+                  (SELECT MAX(position) FROM board_columns WHERE board_id = b.id)
+                      AS last_position
+             FROM tasks t
+             JOIN boards b ON b.id = t.board_id
+             JOIN users u ON u.id = b.user_id
+             JOIN board_columns c ON c.id = t.column_id
+            WHERE t.id = ?""",
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return jsonify(error="Задача не найдена"), 404
+
+    subtasks = task_subtasks(task_id)
+    comments = load_comments(task_id)
+    task = dict(row)
+    task["tags"] = task_tags(task_id)
+    task["subtasks"] = subtasks
+    task["comments"] = comments
+    task["subtasks_total"] = len(subtasks)
+    task["subtasks_done"] = sum(1 for s in subtasks if s["done"])
+    task["comments_count"] = len(comments)
+    task["finished"] = row["column_position"] == row["last_position"]
+    task["owner_id"] = row["owner_id"]
+    return jsonify(task=task)
+
+
 @bp.get("/tasks")
 @admin_required
 def search_tasks():

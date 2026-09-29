@@ -327,7 +327,24 @@ try {
   );
   await page.screenshot({ path: `${OUT}/11-admin-user.png` });
 
-  // 18. Чистая консоль
+  // 18. Карточка параметров задачи
+  await page.locator("#admin-detail .admin-task").first().click();
+  await page.waitForSelector("#admin-task-modal:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector("#at-body .at-block", { timeout: 5000 });
+  const atTitle = (await page.textContent("#at-title")).trim();
+  const atChips = await page.locator("#at-body .meta-chips .chip").count();
+  const atBlocks = await page.locator("#at-body .at-block").count();
+  const atChipsText = await page.locator("#at-body .meta-chips").first().innerText();
+  log(
+    "админ: карточка параметров задачи",
+    atTitle.length > 0 && atChips >= 7 && atBlocks >= 3 && /Владелец/.test(atChipsText),
+    `«${atTitle}», полей ${atChips}, блоков ${atBlocks}`,
+  );
+  await page.screenshot({ path: `${OUT}/12-admin-task.png` });
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#admin-task-modal", { state: "hidden", timeout: 5000 });
+
+  // 19. Чистая консоль
   log("консоль без ошибок", errors.length === 0, errors.slice(0, 3).join(" | "));
 } catch (e) {
   log("исключение", false, String(e).slice(0, 300));

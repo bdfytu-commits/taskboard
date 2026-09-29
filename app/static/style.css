@@ -877,11 +877,30 @@ kbd {
 .search-results { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; }
 .search-row {
   display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-  border-radius: 9px; font-size: 13.5px;
+  border-radius: 9px; font-size: 13.5px; cursor: pointer;
 }
 .search-row:hover { background: var(--panel-2); }
 .search-row b { font-weight: 620; }
 .search-row .muted { font-size: 12.5px; }
+
+.admin-task { cursor: pointer; }
+.admin-task:hover { background: var(--panel-3); }
+
+/* карточка параметров задачи в админке */
+.at-body { max-height: min(66vh, 640px); overflow-y: auto; padding-right: 4px; }
+.at-block { margin-top: 16px; }
+.at-block h4 {
+  margin: 0 0 7px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted); font-weight: 680;
+}
+.at-desc {
+  margin: 0; font-size: 14px; line-height: 1.55; color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+}
+.chip b { color: var(--muted); font-weight: 620; }
+.chip .prio-dot { margin: 0; }
+.subtask-list.readonly li { gap: 9px; }
+.subtask-list.readonly input { cursor: default; }
 
 /* ------------------------------------------------------------------ toast */
 .toast {

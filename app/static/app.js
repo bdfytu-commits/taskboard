@@ -640,6 +640,7 @@ function openTaskModal(task, columnId = null) {
 function closeModals() {
   $("#task-modal").hidden = true;
   $("#stats-modal").hidden = true;
+  $("#admin-task-modal").hidden = true;
 }
 
 /* ------------------------------------------------------------------ подзадачи */
@@ -1200,7 +1201,11 @@ function renderAdminUser(data) {
         col.append(el("div", { class: "muted empty-col", text: "пусто" }));
       }
       for (const t of c.tasks) {
-        col.append(el("div", { class: "admin-task" }, [
+        col.append(el("div", {
+          class: "admin-task",
+          title: "Показать параметры задачи",
+          onclick: () => openAdminTask(t.id),
+        }, [
           el("div", { class: "admin-task-title" }, [
             el("span", { class: `prio-dot ${t.priority}`, title: t.priority }),
             el("span", { text: t.title }),
@@ -1223,6 +1228,97 @@ function renderAdminUser(data) {
   $("#admin-detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+async function openAdminTask(taskId) {
+  try {
+    const data = await api(`/api/admin/tasks/${taskId}`);
+    renderAdminTask(data.task);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function atChip(label, value) {
+  return el("span", { class: "chip" }, [
+    el("b", { text: `${label}: ` }),
+    el("span", { text: String(value) }),
+  ]);
+}
+
+function renderAdminTask(t) {
+  $("#at-title").textContent = t.title;
+  const body = $("#at-body");
+  body.textContent = "";
+
+  const prio = PRIO[t.priority] || ["", t.priority];
+  const due = dueInfo(t.due_date);
+  body.append(el("div", { class: "meta-chips" }, [
+    el("span", { class: "chip" }, [
+      el("span", { class: `prio-dot ${t.priority}` }),
+      el("b", { text: ` ${prio[1]}` }),
+    ]),
+    atChip("Статус", t.finished ? "Готово" : "В работе"),
+    atChip("Владелец", t.owner),
+    atChip("Доска", t.board_name),
+    atChip("Колонка", t.column_name),
+    atChip("Срок", t.due_date
+      ? `${t.due_date}${due ? ` · ${due.text}` : ""}`
+      : "не задан"),
+    atChip("Создано", fmtStamp(t.created_at)),
+    atChip("Обновлено", fmtStamp(t.updated_at)),
+    atChip("ID", `#${t.id}`),
+  ]));
+
+  body.append(el("section", { class: "at-block" }, [
+    el("h4", { text: "Описание" }),
+    el("p", { class: "at-desc", text: t.description || "Описания нет." }),
+  ]));
+
+  body.append(el("section", { class: "at-block" }, [
+    el("h4", { text: `Теги · ${t.tags.length}` }),
+    t.tags.length
+      ? el("div", { class: "meta-chips" },
+          t.tags.map((tag) => el("span", { class: "chip", text: `#${tag}` })))
+      : el("p", { class: "muted", text: "Тегов нет." }),
+  ]));
+
+  const subList = el("ul", { class: "subtask-list readonly" });
+  for (const s of t.subtasks) {
+    const cb = el("input", { type: "checkbox", title: s.done ? "Выполнено" : "Не выполнено" });
+    cb.checked = !!s.done;
+    cb.disabled = true;
+    subList.append(el("li", {}, [
+      cb,
+      el("span", { class: `sub-text${s.done ? " done" : ""}`, text: s.text }),
+    ]));
+  }
+  body.append(el("section", { class: "at-block" }, [
+    el("h4", { text: `Подзадачи · ${t.subtasks_done} из ${t.subtasks_total}` }),
+    t.subtasks.length
+      ? subList
+      : el("p", { class: "muted", text: "Подзадач нет." }),
+  ]));
+
+  const cmtList = el("ul", { class: "comment-list" });
+  for (const c of t.comments) {
+    cmtList.append(el("li", { class: "comment" }, [
+      el("div", { class: "comment-head" }, [
+        el("span", { class: "avatar", text: (c.username || "?").slice(0, 1).toUpperCase() }),
+        el("span", { class: "who", text: c.username }),
+        el("span", { class: "when", text: fmtStamp(c.created_at) }),
+      ]),
+      el("div", { class: "comment-body", text: c.body }),
+    ]));
+  }
+  body.append(el("section", { class: "at-block" }, [
+    el("h4", { text: `Обсуждение · ${t.comments_count}` }),
+    t.comments.length
+      ? cmtList
+      : el("p", { class: "muted", text: "Комментариев нет." }),
+  ]));
+
+  $("#admin-task-modal").hidden = false;
+}
+
 async function searchAdminTasks() {
   const q = $("#admin-task-search").value.trim();
   const box = $("#admin-search-results");
@@ -1240,7 +1336,11 @@ async function searchAdminTasks() {
       return;
     }
     for (const t of data.results) {
-      box.append(el("div", { class: "search-row" }, [
+      box.append(el("div", {
+        class: "search-row",
+        title: "Показать параметры задачи",
+        onclick: () => openAdminTask(t.id),
+      }, [
         el("span", { class: `prio-dot ${t.priority}` }),
         el("b", { text: t.title }),
         el("span", { class: "muted", text: `${t.username} · ${t.board_name} · ${t.column_name}` }),

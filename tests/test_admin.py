@@ -181,3 +181,59 @@ def test_delete_user_removes_their_data(admin_api, authed_api, board):
         ).fetchone()["n"] == 0
 
     assert authed_api.login().status_code == 401
+
+
+def test_admin_task_detail(admin_api, authed_api, board):
+    """Полные параметры любой задачи: владелец, доска, чеклист, обсуждение."""
+    task = authed_api.post(
+        f"/api/boards/{board['id']}/tasks",
+        json={
+            "title": "Задача для админа",
+            "description": "Подробное описание задачи",
+            "priority": "high",
+            "due_date": "2030-01-15",
+            "tags": ["backend", "api"],
+        },
+    ).get_json()["task"]
+    tid = task["id"]
+    authed_api.post(f"/api/tasks/{tid}/subtasks", json={"text": "первый шаг"})
+    authed_api.post(f"/api/tasks/{tid}/comments", json={"body": "заметка для команды"})
+    authed_api.logout()
+
+    res = admin_api.get(f"/api/admin/tasks/{tid}")
+    assert res.status_code == 200
+    t = res.get_json()["task"]
+    assert t["title"] == "Задача для админа"
+    assert t["description"] == "Подробное описание задачи"
+    assert t["owner"] == "ivan"
+    assert t["board_name"] == "Проект X"
+    assert t["column_name"] == "Бэклог"
+    assert t["priority"] == "high"
+    assert t["due_date"] == "2030-01-15"
+    assert sorted(t["tags"]) == ["api", "backend"]
+    assert t["subtasks_total"] == 1
+    assert t["subtasks_done"] == 0
+    assert t["subtasks"][0]["text"] == "первый шаг"
+    assert t["comments_count"] == 1
+    assert t["comments"][0]["username"] == "ivan"
+    assert t["finished"] is False
+    assert t["created_at"] and t["updated_at"]
+
+
+def test_admin_task_detail_permissions(admin_api, authed_api):
+    assert authed_api.get("/api/admin/tasks/1").status_code == 403
+    assert admin_api.get("/api/admin/tasks/99999").status_code == 404
+
+
+def test_admin_task_detail_marks_finished(admin_api, authed_api, board):
+    """Задача в последней колонке помечена как выполненная."""
+    task = authed_api.post(
+        f"/api/boards/{board['id']}/tasks", json={"title": "Готовая задача"}
+    ).get_json()["task"]
+    done_col = board["columns"][-1]
+    authed_api.post(f"/api/tasks/{task['id']}/move", json={"column_id": done_col["id"], "index": 0})
+    authed_api.logout()
+
+    t = admin_api.get(f"/api/admin/tasks/{task['id']}").get_json()["task"]
+    assert t["finished"] is True
+    assert t["column_name"] == "Готово"
