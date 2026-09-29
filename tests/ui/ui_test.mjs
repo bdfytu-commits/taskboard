@@ -89,7 +89,7 @@ try {
   await page.click('#task-form button[type="submit"]');
   await page.waitForSelector("#task-modal", { state: "hidden", timeout: 5000 });
   const created = await page.locator('.card:has-text("Задача из UI-теста")').count();
-  log("создание задачи из UI", created === 1);
+  log("создание задачи из UI", created === 1, `найдено карточек: ${created}`);
 
   // 5. Редактирование
   await page.locator('.card:has-text("Задача из UI-теста")').first().click();
@@ -140,11 +140,15 @@ try {
   // 9. Порядок колонок перетаскиванием заголовка
   const colTitles = () => page.locator(".column .col-head .title").allTextContents();
   const before = (await colTitles())[0];
-  await page
-    .locator(".column")
-    .nth(0)
-    .locator(".col-head")
-    .dragTo(page.locator(".column").nth(1).locator(".col-head"));
+  // третья колонка «Готово» перетаскивается в самое начало (левая половина цели)
+  const thirdHead = page.locator(".column").nth(2).locator(".col-head");
+  const firstHead = page.locator(".column").nth(0).locator(".col-head");
+  const box = await firstHead.boundingBox();
+  await page.dragAndDrop(
+    ".columns > .column:nth-child(3) > .col-head",
+    ".columns > .column:nth-child(1) > .col-head",
+    { targetPosition: { x: 8, y: Math.floor(box.height / 2) } },
+  );
   await page.waitForFunction(
     (prev) => {
       const t = document.querySelector(".column .col-head .title");
@@ -154,7 +158,7 @@ try {
     { timeout: 5000 },
   );
   const afterCol = (await colTitles())[0];
-  log("перетаскивание колонки", afterCol !== before, `${before} → ${afterCol}`);
+  log("перетаскивание колонки", afterCol === "Готово", `${before} → ${afterCol}`);
   await page.screenshot({ path: `${OUT}/06-column-dnd.png` });
 
   // 10. Экспорт доски в Markdown
