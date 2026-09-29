@@ -206,7 +206,42 @@ try {
   log("клавиша n открывает задачу", modalOpen);
   await page.keyboard.press("Escape");
 
-  // 12. Чистая консоль
+  // 12. Свои диалоги вместо prompt/confirm: создание и удаление доски
+  await page.click("#new-board-btn");
+  await page.waitForSelector("#dialog-modal:not([hidden])");
+  await page.fill('#dialog-fields input[name="name"]', "Временная доска");
+  await page.click("#dialog-ok");
+  await page.waitForSelector("#dialog-modal", { state: "hidden", timeout: 5000 });
+  await page.waitForFunction(
+    () => document.body.textContent.includes("Временная доска"),
+    null,
+    { timeout: 5000 },
+  );
+  const createdBoard = await page
+    .locator('.board-list li:has-text("Временная доска")')
+    .count();
+  log("диалог создания доски", createdBoard === 1);
+
+  const tempItem = page.locator('.board-list li:has-text("Временная доска")');
+  await tempItem.hover();
+  await tempItem.locator(".del").click();
+  await page.waitForSelector("#dialog-modal:not([hidden])");
+  const dialogMsg = await page.textContent("#dialog-message");
+  await page.click("#dialog-ok");
+  await page.waitForSelector("#dialog-modal", { state: "hidden", timeout: 5000 });
+  await page.waitForFunction(
+    () => !document.querySelector(".board-list").textContent.includes("Временная доска"),
+    null,
+    { timeout: 5000 },
+  );
+  const titleAfter = await page.textContent("#board-title");
+  log(
+    "диалог подтверждения удаления + сброс экрана",
+    dialogMsg.includes("безвозвратно") && titleAfter.trim() === "Доска",
+    `${dialogMsg.slice(0, 30)} · заголовок: «${titleAfter.trim()}»`,
+  );
+
+  // 13. Чистая консоль
   log("консоль без ошибок", errors.length === 0, errors.slice(0, 3).join(" | "));
 } catch (e) {
   log("исключение", false, String(e).slice(0, 300));

@@ -331,6 +331,22 @@ form label input, form label select, form label textarea { margin-top: 5px; colo
 .spacer { flex: 1; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+/* диалог подтверждения / ввода */
+.dialog-card { width: min(420px, 100%); }
+#dialog-fields label { margin-bottom: 0; }
+#dialog-fields .field + .field { margin-top: 12px; }
+.field { display: block; font-size: 13px; color: var(--muted); }
+.field input { margin-top: 5px; color: var(--text); }
+.field.color-row { display: flex; align-items: center; gap: 10px; }
+.field.color-row input[type="color"] {
+  width: 46px;
+  height: 34px;
+  padding: 2px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn.danger-solid { background: var(--danger); border-color: var(--danger); color: #fff; }
+
 /* подзадачи */
 .subtasks-block { margin-top: 4px; }
 .sub-head {

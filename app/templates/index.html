@@ -164,6 +164,24 @@
     </div>
   </div>
 
+  <!-- ================= GENERIC DIALOG ================= -->
+  <div id="dialog-modal" class="modal" hidden>
+    <div class="modal-card dialog-card">
+      <div class="modal-head">
+        <h2 id="dialog-title">Подтверждение</h2>
+        <button class="icon-btn" data-dialog-close>✕</button>
+      </div>
+      <p id="dialog-message" class="muted" hidden></p>
+      <form id="dialog-form"><div id="dialog-fields"></div></form>
+      <p id="dialog-error" class="error" hidden></p>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button type="button" id="dialog-cancel" class="btn ghost">Отмена</button>
+        <button type="submit" form="dialog-form" id="dialog-ok" class="btn primary">ОК</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" hidden></div>
 
   <script src="/static/app.js"></script>

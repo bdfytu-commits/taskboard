@@ -43,7 +43,7 @@ python3 -m venv .venv
 .venv/bin/python -m pytest -q
 ```
 
-E2E-тесты интерфейса (Playwright, headless Chromium, 14 проверок):
+E2E-тесты интерфейса (Playwright, headless Chromium, 16 проверок):
 
 ```bash
 npm install && npx playwright install chromium
@@ -78,7 +78,7 @@ taskboard/
 │   ├── test_export.py   # экспорт в JSON и Markdown
 │   ├── test_search_stats.py
 │   └── ui/ui_test.mjs   # E2E: вход, CRUD, чеклисты, drag & drop, поиск,
-│                        #   статистика, колонки, экспорт, горячие клавиши
+│                        #   статистика, колонки, экспорт, диалоги, клавиши
 └── docs/                # скриншоты E2E-прогона
 ```
 

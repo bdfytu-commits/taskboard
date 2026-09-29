@@ -146,10 +146,17 @@ function renderBoardList() {
         class: "del", text: "✕", title: "Удалить доску",
         onclick: async (e) => {
           e.stopPropagation();
-          if (!confirm(`Удалить доску «${b.name}» со всеми задачами?`)) return;
+          const ok = await confirmDialog(
+            "Удалить доску",
+            `«${b.name}» и все её задачи будут удалены безвозвратно.`,
+          );
+          if (!ok) return;
           try {
             await api(`/api/boards/${b.id}`, { method: "DELETE" });
-            if (state.board && state.board.id === b.id) { state.board = null; $("#columns").textContent = ""; }
+            if (state.board && state.board.id === b.id) {
+              state.board = null;
+              renderEmpty();  // сбрасываем заголовок и статистику удалённой доски
+            }
             await loadBoards();
             toast("Доска удалена", true);
           } catch (err) { toast(err.message); }
@@ -188,26 +195,39 @@ function renderEmpty() {
 }
 
 async function createBoard() {
-  const name = prompt("Название новой доски:");
-  if (!name || !name.trim()) return;
-  const color = prompt("Цвет метки (hex, например #6366f1):", "#6366f1") || "#6366f1";
+  const data = await inputDialog("Новая доска", [
+    { name: "name", label: "Название", placeholder: "Мой проект", maxlength: 100 },
+    { name: "color", label: "Цвет метки", type: "color", value: "#6366f1" },
+  ], "Создать");
+  if (!data || !data.name.trim()) return;
   try {
-    const data = await api("/api/boards", { method: "POST", body: { name: name.trim(), color } });
+    const res = await api("/api/boards", {
+      method: "POST",
+      body: { name: data.name.trim(), color: data.color },
+    });
     await loadBoards();
-    await openBoard(data.board.id);
+    await openBoard(res.board.id);
     toast("Доска создана", true);
   } catch (err) { toast(err.message); }
 }
 
 async function renameBoard() {
   if (!state.board) return;
-  const name = prompt("Новое название доски:", state.board.name);
-  if (!name || !name.trim() || name.trim() === state.board.name) return;
+  const data = await inputDialog("Переименовать доску", [
+    { name: "name", label: "Название", value: state.board.name, maxlength: 100 },
+    { name: "color", label: "Цвет метки", type: "color", value: state.board.color || "#6366f1" },
+  ], "Сохранить");
+  if (!data || !data.name.trim()) return;
   try {
-    await api(`/api/boards/${state.board.id}`, { method: "PATCH", body: { name: name.trim() } });
-    state.board.name = name.trim();
+    await api(`/api/boards/${state.board.id}`, {
+      method: "PATCH",
+      body: { name: data.name.trim(), color: data.color },
+    });
+    state.board.name = data.name.trim();
+    state.board.color = data.color;
     $("#board-title").textContent = state.board.name;
     await loadBoards();
+    toast("Доска обновлена", true);
   } catch (err) { toast(err.message); }
 }
 
@@ -269,7 +289,11 @@ function renderBoard() {
       el("button", {
         class: "icon-btn", text: "✕", title: "Удалить колонку",
         onclick: async () => {
-          if (!confirm(`Удалить колонку «${col.name}» вместе с задачами?`)) return;
+          const ok = await confirmDialog(
+            "Удалить колонку",
+            `«${col.name}» и все задачи в ней будут удалены безвозвратно.`,
+          );
+          if (!ok) return;
           try {
             await api(`/api/columns/${col.id}`, { method: "DELETE" });
             await openBoard(board.id);
@@ -473,20 +497,28 @@ async function moveTask(taskId, columnId, index) {
 }
 
 async function addColumn() {
-  const name = prompt("Название колонки:");
-  if (!name || !name.trim()) return;
+  const data = await inputDialog("Новая колонка", [
+    { name: "name", label: "Название", placeholder: "Например, Ревью", maxlength: 60 },
+  ], "Добавить");
+  if (!data || !data.name.trim()) return;
   try {
-    await api(`/api/boards/${state.board.id}/columns`, { method: "POST", body: { name: name.trim() } });
+    await api(`/api/boards/${state.board.id}/columns`, {
+      method: "POST",
+      body: { name: data.name.trim() },
+    });
     await openBoard(state.board.id);
+    toast("Колонка добавлена", true);
   } catch (err) { toast(err.message); }
 }
 
 async function renameColumn(col) {
-  const name = prompt("Новое название колонки:", col.name);
-  if (!name || !name.trim() || name.trim() === col.name) return;
+  const data = await inputDialog("Переименовать колонку", [
+    { name: "name", label: "Название", value: col.name, maxlength: 60 },
+  ], "Сохранить");
+  if (!data || !data.name.trim()) return;
   try {
-    await api(`/api/columns/${col.id}`, { method: "PATCH", body: { name: name.trim() } });
-    col.name = name.trim();
+    await api(`/api/columns/${col.id}`, { method: "PATCH", body: { name: data.name.trim() } });
+    col.name = data.name.trim();
     renderBoard();
   } catch (err) { toast(err.message); }
 }
@@ -621,7 +653,11 @@ function setupTaskModal() {
 
   $("#task-delete").addEventListener("click", async () => {
     if (!state.editingTask) return;
-    if (!confirm("Удалить задачу?")) return;
+    const ok = await confirmDialog(
+      "Удалить задачу",
+      `«${state.editingTask.title}» будет удалена безвозвратно.`,
+    );
+    if (!ok) return;
     try {
       await api(`/api/tasks/${state.editingTask.id}`, { method: "DELETE" });
       closeModals();
@@ -706,6 +742,106 @@ async function showStats() {
     $("#stats-modal").hidden = false;
   } catch (err) { toast(err.message); }
 }
+
+/* ------------------------------------------------------- универсальный диалог */
+let dialogResolve = null;
+
+/**
+ * Модальный диалог ввода/подтверждения.
+ * @returns {Promise<Object|null>} значения полей, true для подтверждения
+ *                                 или null при отмене.
+ */
+function dialog({ title, message = "", fields = [], okText = "ОК", cancelText = "Отмена", danger = false }) {
+  return new Promise((resolve) => {
+    const modal = $("#dialog-modal");
+    const form = $("#dialog-form");
+    const fieldsBox = $("#dialog-fields");
+    const errBox = $("#dialog-error");
+
+    const finish = (value) => {
+      modal.hidden = true;
+      document.removeEventListener("keydown", onKey, true);
+      const cb = dialogResolve;
+      dialogResolve = null;
+      if (cb) cb(value);
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        finish(null);
+      }
+    };
+
+    dialogResolve = resolve;
+    $("#dialog-title").textContent = title;
+    const msg = $("#dialog-message");
+    msg.textContent = message;
+    msg.hidden = !message;
+    errBox.hidden = true;
+    fieldsBox.textContent = "";
+
+    for (const f of fields) {
+      if (f.type === "color") {
+        const input = el("input", { type: "color", name: f.name, value: f.value || "#6366f1" });
+        fieldsBox.append(el("label", { class: "field color-row" }, [
+          input, el("span", { text: f.label }),
+        ]));
+      } else {
+        fieldsBox.append(el("label", { class: "field" }, [
+          el("span", { text: f.label }),
+          el("input", {
+            type: "text",
+            name: f.name,
+            value: f.value ?? "",
+            placeholder: f.placeholder ?? "",
+            maxlength: String(f.maxlength ?? 100),
+            ...(f.required === false ? {} : { required: "required" }),
+            autocomplete: "off",
+          }),
+        ]));
+      }
+    }
+
+    const okBtn = $("#dialog-ok");
+    okBtn.textContent = okText;
+    okBtn.classList.toggle("danger-solid", !!danger);
+    $("#dialog-cancel").textContent = cancelText;
+
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      if (!fields.length) return finish(true);
+      const data = Object.fromEntries(new FormData(form).entries());
+      for (const f of fields) {
+        if (f.required === false) continue;
+        if (!String(data[f.name] ?? "").trim()) {
+          errBox.textContent = f.error || "Заполните поле";
+          errBox.hidden = false;
+          return;
+        }
+      }
+      finish(data);
+    };
+    $("#dialog-cancel").onclick = () => finish(null);
+    $("[data-dialog-close]").onclick = () => finish(null);
+    modal.onmousedown = (e) => {
+      if (e.target === modal) finish(null);
+    };
+
+    modal.hidden = false;
+    document.addEventListener("keydown", onKey, true);
+    setTimeout(() => {
+      const first = fieldsBox.querySelector("input");
+      if (first) first.focus();
+      else okBtn.focus();
+    }, 30);
+  });
+}
+
+const confirmDialog = (title, message, okText = "Удалить") =>
+  dialog({ title, message, fields: [], okText, danger: true });
+
+const inputDialog = (title, fields, okText = "ОК") =>
+  dialog({ title, fields, okText });
 
 /* ------------------------------------------------------------------ экспорт */
 async function exportBoard(e) {
