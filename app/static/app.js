@@ -33,6 +33,10 @@ const state = {
   editingTask: null,    // объект задачи или null (создание)
   editingSubtasks: [],  // черновик чеклиста в открытой модалке
   pendingColumnId: null,
+  view: "board",        // "board" | "my" — какая вкладка открыта
+  my: { period: "", tasks: [], summary: null },
+  comments: [],         // комментарии загруженной задачи
+  admin: { summary: null, users: [] },
 };
 
 let toastTimer = null;
@@ -70,13 +74,45 @@ async function api(path, { method = "GET", body } = {}) {
   return data;
 }
 
+/* ------------------------------------------------------------------ theme */
+const THEME_KEY = "taskboard-theme";
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const btn = $("#theme-btn");
+  if (btn) btn.textContent = theme === "dark" ? "☀️" : "🌙";
+  try { localStorage.setItem(THEME_KEY, theme); } catch { /* приватный режим */ }
+}
+
+function setupTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem(THEME_KEY); } catch { /* нет хранилища */ }
+  applyTheme(saved || "light");
+  $("#theme-btn").addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+  });
+}
+
 /* ------------------------------------------------------------------ auth */
+function setUserName(username) {
+  $("#whoami").textContent = username;
+  $("#avatar").textContent = (username || "?").slice(0, 1).toUpperCase();
+}
+
 function showAuth() {
   state.user = null;
   state.csrf = null;
   state.board = null;
   $("#app-view").hidden = true;
   $("#auth-view").hidden = false;
+  $("#nav-admin").hidden = true;
+}
+
+function applyRole(user) {
+  const admin = user && user.role === "admin";
+  $("#nav-admin").hidden = !admin;
+  $("#urole").textContent = admin ? "администратор" : "владелец рабочего пространства";
 }
 
 function showApp() {
@@ -94,6 +130,17 @@ function setupAuth() {
     })
   );
 
+  // подсказка для демо-аккаунта
+  const hint = $("#demo-hint");
+  hint.hidden = false;
+  hint.addEventListener("click", () => {
+    const form = $("#auth-form");
+    form.username.value = "demo";
+    form.password.value = "demo1234";
+    form.username.focus();
+    toast("Данные подставлены — нажмите «Войти»", true);
+  });
+
   $("#auth-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -105,10 +152,11 @@ function setupAuth() {
     errBox.hidden = true;
     try {
       const data = await api(`/api/auth/${state.mode}`, { method: "POST", body: payload });
-      state.user = { username: data.username };
+      state.user = { username: data.username, role: data.role || "user" };
       state.csrf = data.csrf_token;
       form.password.value = "";
-      $("#whoami").textContent = `👤 ${data.username}`;
+      setUserName(data.username);
+      applyRole(state.user);
       showApp();
       await boot();
     } catch (err) {
@@ -155,9 +203,10 @@ function renderBoardList() {
             await api(`/api/boards/${b.id}`, { method: "DELETE" });
             if (state.board && state.board.id === b.id) {
               state.board = null;
-              renderEmpty();  // сбрасываем заголовок и статистику удалённой доски
+              if (state.view === "board") renderEmpty();  // сброс экрана удалённой доски
             }
             await loadBoards();
+            if (state.view === "my") await refreshMyTasks();
             toast("Доска удалена", true);
           } catch (err) { toast(err.message); }
         },
@@ -168,6 +217,12 @@ function renderBoardList() {
 }
 
 async function openBoard(boardId) {
+  if (state.view !== "board") {
+    state.view = "board";
+    $("#nav-my").classList.remove("active");
+    $("#my-view").hidden = true;
+    updateToolbar();
+  }
   try {
     const data = await api(`/api/boards/${boardId}`);
     state.board = data.board;
@@ -189,8 +244,10 @@ async function openBoard(boardId) {
 function renderEmpty() {
   $("#columns").textContent = "";
   $("#columns").hidden = true;
+  $("#admin-view").hidden = true;
   $("#empty-state").hidden = false;
   $("#board-title").textContent = "Доска";
+  $("#board-dot").hidden = true;
   $("#stats-bar").hidden = true;
 }
 
@@ -266,16 +323,20 @@ function renderBoard() {
   const board = state.board;
   if (!board) return renderEmpty();
   $("#board-title").textContent = board.name;
+  const dot = $("#board-dot");
+  dot.style.background = board.color || "var(--accent)";
+  dot.hidden = false;
   const wrap = $("#columns");
   wrap.textContent = "";
   wrap.hidden = false;
   $("#empty-state").hidden = true;
 
-  for (const col of board.columns) {
+  board.columns.forEach((col, colIndex) => {
+    const finishedColumn = colIndex === board.columns.length - 1;
     const visible = filteredTasks(col.tasks);
     const body = el("div", { class: "col-body", dataset: { columnId: String(col.id) } });
 
-    for (const task of visible) body.append(renderCard(task));
+    for (const task of visible) body.append(renderCard(task, finishedColumn));
 
     body.append(el("button", {
       class: "add-task-inline", text: "＋ Добавить задачу",
@@ -308,7 +369,7 @@ function renderBoard() {
     setupColumnDrag(head, column, col);
     setupDropZone(body, column);
     wrap.append(column);
-  }
+  });
 
   const addCol = el("button", {
     class: "add-task-inline",
@@ -321,10 +382,13 @@ function renderBoard() {
 
 }
 
-function renderCard(task) {
+function renderCard(task, finished = false) {
   const [icon, label] = PRIO[task.priority] || PRIO.medium;
-  const due = dueInfo(task.due_date);
-  const overdue = due && due.cls === "late";
+  // у выполненных задач срок не «горит» — показываем просто дату
+  const due = finished
+    ? (task.due_date ? { cls: "", text: task.due_date } : null)
+    : dueInfo(task.due_date);
+  const overdue = !finished && due && due.cls === "late";
 
   const children = [
     el("div", { class: "t", text: task.title }),
@@ -342,14 +406,19 @@ function renderCard(task) {
       text: `☑ ${done}/${subs.length}`,
     }));
   }
+  if (task.comments) meta.append(el("span", {
+    class: "cmt-badge", title: "Комментарии", text: `💬 ${task.comments}`,
+  }));
   if (due) meta.append(el("span", { class: `due ${due.cls}`, text: `📅 ${due.text}` }));
-  meta.append(el("span", { class: "prio", title: label, text: icon }));
+  meta.append(el("span", {
+    class: `prio-dot ${task.priority}`, title: `Приоритет: ${label}`, text: "",
+  }));
   children.push(meta);
 
   const card = el("div", {
-    class: `card${overdue ? " overdue" : ""}`,
+    class: `card prio-${task.priority}${overdue ? " overdue" : ""}`,
     draggable: filtersActive() ? null : "true",
-    title: filtersActive() ? "Снимите фильтр, чтобы перетаскивать" : "Перетащите в другую колонку",
+    title: filtersActive() ? "Снимите фильтр, чтобы перетаскивать" : "Открыть задачу · перетащите в другую колонку",
     onclick: () => openTaskModal(task),
   }, children);
 
@@ -550,6 +619,20 @@ function openTaskModal(task, columnId = null) {
   if (task) colSelect.value = String(task.column_id);
   else if (columnId) colSelect.value = String(columnId);
 
+  // комментарии есть только у сохранённых задач
+  const commentBlock = $("#comments-block");
+  state.comments = [];
+  if (task) {
+    commentBlock.hidden = false;
+    $("#comment-list").textContent = "";
+    $("#comment-input").value = "";
+    $("#comment-counter").textContent = task.comments ? `${task.comments} шт.` : "";
+    loadComments(task.id);
+  } else {
+    commentBlock.hidden = true;
+    $("#comment-input").value = "";
+  }
+
   modal.hidden = false;
   setTimeout(() => form.title.focus(), 30);
 }
@@ -615,6 +698,14 @@ function setupTaskModal() {
     }
   });
 
+  $("#comment-add").addEventListener("click", addComment);
+  $("#comment-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      addComment();
+    }
+  });
+
   $("#task-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -643,8 +734,9 @@ function setupTaskModal() {
         toast("Задача создана", true);
       }
       closeModals();
-      await openBoard(state.board.id);
       await loadBoards();
+      if (state.view === "board" && state.board) await openBoard(state.board.id);
+      else await refreshMyTasks();
     } catch (err) {
       errBox.textContent = err.message;
       errBox.hidden = false;
@@ -661,8 +753,9 @@ function setupTaskModal() {
     try {
       await api(`/api/tasks/${state.editingTask.id}`, { method: "DELETE" });
       closeModals();
-      await openBoard(state.board.id);
       await loadBoards();
+      if (state.view === "board" && state.board) await openBoard(state.board.id);
+      else await refreshMyTasks();
       toast("Задача удалена", true);
     } catch (err) { toast(err.message); }
   });
@@ -676,20 +769,31 @@ function setupTaskModal() {
 
 /* ------------------------------------------------------------------ stats */
 async function refreshStats() {
-  if (!state.board) return;
+  if (!state.board || state.view !== "board") return;
   try {
     const s = await api(`/api/boards/${state.board.id}/stats`);
     const bar = $("#stats-bar");
     bar.textContent = "";
+
+    bar.append(el("span", { class: "chip" }, [
+      "Готово ", el("b", { text: `${s.done_percent}%` }),
+    ]));
+    bar.append(el("div", { class: "progress", title: "Доля выполненных задач" }, [
+      el("i", { style: `width:${Math.min(100, s.done_percent)}%` }),
+    ]));
+
     const chips = [
-      ["Всего", s.total],
-      ["Готово", `${s.done} (${s.done_percent}%)`],
-      ["Просрочено", s.overdue],
-      ["Скоро срок", s.due_soon],
-      ["Срочные", s.by_priority.urgent],
-      ["Подзадачи", `${s.subtasks_done}/${s.subtasks_total}`],
+      ["Всего", s.total, false],
+      ["Просрочено", s.overdue, s.overdue > 0],
+      ["Скоро срок", s.due_soon, false],
+      ["Срочные", s.by_priority.urgent, false],
+      ["Подзадачи", `${s.subtasks_done}/${s.subtasks_total}`, false],
     ];
-    for (const [k, v] of chips) bar.append(el("span", {}, [`${k}: `, el("b", { text: String(v) })]));
+    for (const [k, v, alert] of chips) {
+      bar.append(el("span", { class: `chip${alert ? " alert" : ""}` }, [
+        `${k}: `, el("b", { text: String(v) }),
+      ]));
+    }
     bar.hidden = false;
   } catch { /* статистика необязательна */ }
 }
@@ -711,7 +815,8 @@ async function showStats() {
       ["Подзадачи", `${s.subtasks_done}/${s.subtasks_total}`],
     ];
     for (const [k, v] of cells) {
-      grid.append(el("div", { class: "stat" }, [
+      const alert = k === "Просрочено" && Number(v) > 0;
+      grid.append(el("div", { class: `stat${alert ? " alert" : ""}` }, [
         el("div", { class: "v", text: String(v) }),
         el("div", { class: "k", text: k }),
       ]));
@@ -741,6 +846,503 @@ async function showStats() {
 
     $("#stats-modal").hidden = false;
   } catch (err) { toast(err.message); }
+}
+
+/* --------------------------------------------------------------- мои задачи */
+const MY_PERIODS = [
+  ["", "Активные"],
+  ["overdue", "Просрочено"],
+  ["today", "Сегодня"],
+  ["week", "На неделе"],
+  ["later", "Позже"],
+  ["none", "Без срока"],
+];
+
+const BUCKET_TITLES = {
+  overdue: "⏰ Просрочено",
+  today: "📍 Сегодня",
+  week: "📅 На этой неделе",
+  later: "🗓 Позже",
+  none: "🔕 Без срока",
+  done: "✅ Выполнено",
+};
+
+function updateNavBadge(summary) {
+  const badge = $("#nav-my-badge");
+  if (!summary) return;
+  const active = summary.total - summary.done;
+  badge.textContent = String(active);
+  badge.hidden = false;
+  badge.classList.toggle("alert", summary.overdue > 0);
+}
+
+async function refreshMyTasks() {
+  try {
+    const params = new URLSearchParams();
+    if (state.my.period) params.set("period", state.my.period);
+    if (state.filters.q) params.set("q", state.filters.q);
+    if (state.filters.priority) params.set("priority", state.filters.priority);
+    const data = await api(`/api/my-tasks?${params}`);
+    state.my.tasks = data.results;
+    state.my.summary = data.summary;
+    updateNavBadge(data.summary);
+    if (state.view === "my") renderMyTasks();
+  } catch (err) {
+    if (state.view === "my") toast(err.message);
+  }
+}
+
+function updateToolbar() {
+  const boardMode = state.view === "board";
+  for (const id of ["#stats-btn", "#export", "#add-column-btn", "#add-task-btn"]) {
+    $(id).hidden = !boardMode;
+  }
+  const boardish = state.view !== "admin";
+  $(".search-wrap").hidden = !boardish;
+  $("#priority-filter").hidden = !boardish;
+}
+
+function renderMyTasks() {
+  const filters = $("#my-filters");
+  filters.textContent = "";
+  const summary = state.my.summary || {};
+
+  for (const [key, label] of MY_PERIODS) {
+    const n = key === ""
+      ? (summary.total ?? 0) - (summary.done ?? 0)
+      : (summary[key] ?? 0);
+    filters.append(el("button", {
+      class: `pill-tab${state.my.period === key ? " active" : ""}`,
+      onclick: () => {
+        state.my.period = key;
+        refreshMyTasks();
+      },
+    }, [label, el("span", { class: "n", text: String(n) })]));
+  }
+
+  const wrap = $("#my-list");
+  wrap.textContent = "";
+
+  if (!state.my.tasks.length) {
+    wrap.append(el("div", { class: "empty" }, [
+      el("div", { class: "empty-icon", text: "🎉" }),
+      el("h3", { text: "Задач по фильтру нет" }),
+      el("p", { class: "muted", text: "Снимите фильтры или добавьте новую задачу на доске." }),
+    ]));
+    return;
+  }
+
+  const groups = {};
+  for (const t of state.my.tasks) {
+    const key = t.finished ? "done" : t.bucket;
+    (groups[key] = groups[key] || []).push(t);
+  }
+
+  const order = ["overdue", "today", "week", "later", "none", "done"];
+  for (const key of order) {
+    const items = groups[key];
+    if (!items || !items.length) continue;
+    const list = el("div", { class: "my-list" });
+    for (const t of items) list.append(renderMyCard(t));
+    wrap.append(el("div", { class: "bucket" }, [
+      el("div", { class: `bucket-head ${key}` }, [
+        el("span", { text: BUCKET_TITLES[key] }),
+        el("span", { class: "cnt", text: `${items.length}` }),
+        el("span", { class: "line" }),
+      ]),
+      list,
+    ]));
+  }
+}
+
+function renderMyCard(task) {
+  const due = dueInfo(task.due_date);
+  const subs = task.subtasks || [];
+  const done = subs.filter((s) => s.done).length;
+
+  return el("div", {
+    class: `my-card prio-${task.priority}${task.finished ? " done" : ""}`,
+    title: "Открыть задачу",
+    onclick: () => jumpToTask(task),
+  }, [
+    el("div", { class: "body" }, [
+      el("div", { class: "t", text: task.title }),
+      el("div", { class: "sub" }, [
+        el("span", { class: "where" }, [
+          el("span", { class: "dot", style: `background:${task.board_color || "var(--accent)"}` }),
+          `${task.board_name} → ${task.column_name}`,
+        ]),
+        ...(task.tags || []).map((tag) => el("span", { class: "tag", text: tag })),
+        ...(subs.length ? [el("span", { class: "sub-badge", text: `☑ ${done}/${subs.length}` })] : []),
+        ...(task.comments ? [el("span", { class: "cmt-badge", text: `💬 ${task.comments}` })] : []),
+        ...(due ? [el("span", { class: `due ${due.cls}`, text: `📅 ${due.text}` })] : []),
+      ]),
+    ]),
+    el("span", {
+      class: `prio-dot ${task.priority}`,
+      title: `Приоритет: ${PRIO[task.priority][1]}`,
+      text: "",
+    }),
+  ]);
+}
+
+async function jumpToTask(task) {
+  await showBoardView();
+  await openBoard(task.board_id);
+  const col = (state.board && state.board.columns || []).find((c) => c.id === task.column_id);
+  const fresh = col && col.tasks.find((t) => t.id === task.id);
+  if (fresh) openTaskModal(fresh);
+  else toast("Задача не найдена — возможно, она удалена");
+}
+
+async function showMyView() {
+  state.view = "my";
+  $("#nav-my").classList.add("active");
+  $("#nav-admin").classList.remove("active");
+  $("#columns").hidden = true;
+  $("#admin-view").hidden = true;
+  $("#empty-state").hidden = true;
+  $("#stats-bar").hidden = true;
+  $("#board-title").textContent = "Мои задачи";
+  $("#board-dot").hidden = true;
+  $("#my-view").hidden = false;
+  updateToolbar();
+  await refreshMyTasks();
+}
+
+async function showBoardView() {
+  state.view = "board";
+  $("#nav-my").classList.remove("active");
+  $("#nav-admin").classList.remove("active");
+  $("#my-view").hidden = true;
+  $("#admin-view").hidden = true;
+  updateToolbar();
+  if (state.board) {
+    $("#empty-state").hidden = true;
+    renderBoard();
+    await refreshStats();
+  } else {
+    renderEmpty();
+  }
+}
+
+/* --------------------------------------------------------------- админ-панель */
+function hideWorkViews() {
+  $("#columns").hidden = true;
+  $("#my-view").hidden = true;
+  $("#admin-view").hidden = true;
+  $("#empty-state").hidden = true;
+  $("#stats-bar").hidden = true;
+}
+
+async function showAdminView() {
+  state.view = "admin";
+  $("#nav-my").classList.remove("active");
+  $("#nav-admin").classList.add("active");
+  hideWorkViews();
+  $("#board-title").textContent = "Админ-панель";
+  $("#board-dot").hidden = true;
+  $("#admin-view").hidden = false;
+  updateToolbar();
+  await refreshAdmin();
+}
+
+async function refreshAdmin() {
+  try {
+    const [s, u] = await Promise.all([
+      api("/api/admin/summary"),
+      api("/api/admin/users"),
+    ]);
+    state.admin.summary = s.summary;
+    state.admin.users = u.users;
+    renderAdminSummary();
+    renderAdminUsers();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function renderAdminSummary() {
+  const s = state.admin.summary || {};
+  const cards = [
+    ["users", "Пользователей", "👥", `${s.admins || 0} с ролью администратора`],
+    ["active_users", "Активных", "📈", "с досками или комментариями"],
+    ["boards", "Досок", "🗂️", `${s.columns || 0} колонок`],
+    ["tasks", "Задач", "🧩", `${s.done_tasks || 0} в колонке «Готово»`],
+    ["subtasks", "Подзадач", "☑️", `${s.subtasks_done || 0} выполнено`],
+    ["comments", "Комментариев", "💬", "обсуждения в задачах"],
+  ];
+  const wrap = $("#admin-summary");
+  wrap.textContent = "";
+  for (const [key, label, icon, sub] of cards) {
+    wrap.append(el("div", { class: "stat-card" }, [
+      el("span", { class: "stat-ico", text: icon }),
+      el("div", { class: "stat-body" }, [
+        el("div", { class: "stat-n", text: String(s[key] ?? 0) }),
+        el("div", { class: "stat-l", text: label }),
+        el("div", { class: "stat-sub", text: sub }),
+      ]),
+    ]));
+  }
+}
+
+function renderAdminUsers() {
+  const tbody = $("#admin-users tbody");
+  tbody.textContent = "";
+  const users = state.admin.users;
+  $("#admin-users-n").textContent = `· ${users.length}`;
+
+  for (const u of users) {
+    const isAdmin = u.role === "admin";
+    const me = state.user && u.username === state.user.username;
+    const actions = [];
+    if (!me) {
+      actions.push(el("button", {
+        class: "btn ghost sm",
+        text: isAdmin ? "Убрать админа" : "Сделать админом",
+        onclick: async (e) => {
+          e.stopPropagation();
+          try {
+            await api(`/api/admin/users/${u.id}/role`, {
+              method: "POST",
+              body: { role: isAdmin ? "user" : "admin" },
+            });
+            toast(`${u.username}: роль обновлена`, true);
+            refreshAdmin();
+          } catch (err) { toast(err.message); }
+        },
+      }));
+      actions.push(el("button", {
+        class: "btn danger ghost sm",
+        text: "Удалить",
+        onclick: async (e) => {
+          e.stopPropagation();
+          const ok = await confirmDialog(
+            "Удалить аккаунт?",
+            `Пользователь ${u.username} и все его доски, задачи и комментарии
+             будут удалены безвозвратно.`,
+          );
+          if (!ok) return;
+          try {
+            await api(`/api/admin/users/${u.id}`, { method: "DELETE" });
+            toast(`${u.username} удалён`, true);
+            $("#admin-detail").hidden = true;
+            refreshAdmin();
+          } catch (err) { toast(err.message); }
+        },
+      }));
+    }
+
+    tbody.append(el("tr", {
+      class: "row-clickable",
+      title: "Показать данные пользователя",
+      onclick: () => openAdminUser(u.id),
+    }, [
+      el("td", {}, [
+        el("span", { class: "avatar sm", text: (u.username || "?").slice(0, 1).toUpperCase() }),
+        el("span", { class: "cell-user", text: u.username + (me ? " (вы)" : "") }),
+      ]),
+      el("td", {}, [
+        el("span", { class: `role-chip${isAdmin ? " admin" : ""}`, text: isAdmin ? "админ" : "юзер" }),
+      ]),
+      el("td", { class: "num", text: String(u.boards) }),
+      el("td", { class: "num", text: String(u.tasks) }),
+      el("td", { class: "num", text: String(u.comments) }),
+      el("td", { class: "muted", text: u.last_activity ? fmtStamp(u.last_activity) : "нет задач" }),
+      el("td", { class: "cell-actions", onclick: (e) => e.stopPropagation() }, actions),
+    ]));
+  }
+}
+
+async function openAdminUser(userId) {
+  try {
+    const data = await api(`/api/admin/users/${userId}`);
+    renderAdminUser(data);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+function renderAdminUser(data) {
+  const u = data.user;
+  $("#admin-detail-title").textContent = `Данные: ${u.username}`;
+  const body = $("#admin-detail-body");
+  body.textContent = "";
+
+  const meta = el("div", { class: "meta-chips" }, [
+    el("span", { class: "chip", text: `роль: ${u.role === "admin" ? "администратор" : "пользователь"}` }),
+    el("span", { class: "chip", text: `регистрация: ${u.created_at ? u.created_at.slice(0, 10) : "—"}` }),
+    el("span", { class: "chip", text: `досок: ${u.boards}` }),
+    el("span", { class: "chip", text: `задач: ${u.tasks}` }),
+    el("span", { class: "chip", text: `комментариев: ${u.comments}` }),
+  ]);
+  body.append(meta);
+
+  if (!data.boards.length) {
+    body.append(el("p", { class: "muted", text: "У пользователя пока нет досок." }));
+    $("#admin-detail").hidden = false;
+    $("#admin-detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    return;
+  }
+
+  for (const b of data.boards) {
+    const boardBox = el("div", { class: "admin-board" });
+    boardBox.append(el("div", { class: "admin-board-head" }, [
+      el("span", { class: "board-dot", style: `background:${b.color}` }),
+      el("b", { text: b.name }),
+      el("span", { class: "muted", text: `${b.tasks_count} задач` }),
+    ]));
+    const cols = el("div", { class: "admin-cols" });
+    for (const c of b.columns) {
+      const col = el("div", { class: "admin-col" });
+      col.append(el("div", { class: "admin-col-title", text: `${c.name} · ${c.tasks.length}` }));
+      if (!c.tasks.length) {
+        col.append(el("div", { class: "muted empty-col", text: "пусто" }));
+      }
+      for (const t of c.tasks) {
+        col.append(el("div", { class: "admin-task" }, [
+          el("div", { class: "admin-task-title" }, [
+            el("span", { class: `prio-dot ${t.priority}`, title: t.priority }),
+            el("span", { text: t.title }),
+          ]),
+          el("div", { class: "admin-task-meta muted" }, [
+            t.due_date ? el("span", { text: `📅 ${t.due_date}` }) : null,
+            el("span", { text: `☑ ${t.sub_done}/${t.sub_total}` }),
+            el("span", { text: `💬 ${t.comments}` }),
+            t.tags.length ? el("span", { text: `#${t.tags.join(" #")}` }) : null,
+          ]),
+        ]));
+      }
+      cols.append(col);
+    }
+    boardBox.append(cols);
+    body.append(boardBox);
+  }
+
+  $("#admin-detail").hidden = false;
+  $("#admin-detail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function searchAdminTasks() {
+  const q = $("#admin-task-search").value.trim();
+  const box = $("#admin-search-results");
+  if (!q) {
+    box.className = "search-results muted";
+    box.textContent = "Введите запрос — покажем задачи всех аккаунтов.";
+    return;
+  }
+  try {
+    const data = await api(`/api/admin/tasks?q=${encodeURIComponent(q)}`);
+    box.className = "search-results";
+    box.textContent = "";
+    if (!data.count) {
+      box.append(el("p", { class: "muted", text: "Ничего не найдено." }));
+      return;
+    }
+    for (const t of data.results) {
+      box.append(el("div", { class: "search-row" }, [
+        el("span", { class: `prio-dot ${t.priority}` }),
+        el("b", { text: t.title }),
+        el("span", { class: "muted", text: `${t.username} · ${t.board_name} · ${t.column_name}` }),
+        el("span", { class: "muted", text: `💬 ${t.comments}` }),
+      ]));
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+/* --------------------------------------------------------------- комментарии */
+function fmtStamp(stamp) {
+  if (!stamp) return "";
+  try {
+    const d = new Date(stamp.replace(" ", "T") + "Z");
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    const hm = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    if (sameDay) return `сегодня ${hm}`;
+    return `${d.toLocaleDateString("ru-RU", { day: "2-digit", month: "short" })} ${hm}`;
+  } catch {
+    return stamp;
+  }
+}
+
+function renderComments() {
+  const list = $("#comment-list");
+  list.textContent = "";
+  const count = state.comments.length;
+  $("#comment-counter").textContent = count ? `${count} шт.` : "";
+
+  if (!count) {
+    list.append(el("li", { class: "comment-empty", text: "Комментариев пока нет" }));
+    return;
+  }
+
+  for (const c of state.comments) {
+    const canDelete = state.user && c.username === state.user.username;
+    list.append(el("li", { class: "comment" }, [
+      el("div", { class: "comment-head" }, [
+        el("span", { class: "avatar", text: (c.username || "?").slice(0, 1).toUpperCase() }),
+        el("span", { class: "who", text: c.username }),
+        el("span", { class: "when", text: fmtStamp(c.created_at) }),
+        canDelete ? el("button", {
+          class: "icon-btn del", text: "✕", title: "Удалить комментарий",
+          onclick: () => deleteComment(c.id),
+        }) : null,
+      ]),
+      el("div", { class: "comment-body", text: c.body }),
+    ]));
+  }
+}
+
+async function loadComments(taskId) {
+  try {
+    const data = await api(`/api/tasks/${taskId}/comments`);
+    state.comments = data.comments;
+    renderComments();
+  } catch {
+    state.comments = [];
+    renderComments();
+  }
+}
+
+async function addComment() {
+  const input = $("#comment-input");
+  const body = input.value.trim();
+  if (!body || !state.editingTask) return;
+  const btn = $("#comment-add");
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/tasks/${state.editingTask.id}/comments`, {
+      method: "POST",
+      body: { body },
+    });
+    state.comments.push(res.comment);
+    input.value = "";
+    if (state.editingTask) state.editingTask.comments = state.comments.length;
+    renderComments();
+    if (state.view === "board") { renderBoard(); refreshMyTasks(); }
+    else renderMyTasks();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+async function deleteComment(id) {
+  try {
+    await api(`/api/comments/${id}`, { method: "DELETE" });
+    state.comments = state.comments.filter((c) => c.id !== id);
+    if (state.editingTask) state.editingTask.comments = state.comments.length;
+    renderComments();
+    if (state.view === "board") { renderBoard(); refreshMyTasks(); }
+    else renderMyTasks();
+    toast("Комментарий удалён", true);
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 /* ------------------------------------------------------- универсальный диалог */
@@ -892,13 +1494,27 @@ async function boot() {
   await loadBoards();
   if (state.boards.length) await openBoard(state.boards[0].id);
   else renderEmpty();
+  await refreshMyTasks();  // бейдж «Мои задачи»
 }
 
 async function start() {
   setupAuth();
   setupTaskModal();
   setupShortcuts();
+  setupTheme();
 
+  $("#nav-my").addEventListener("click", showMyView);
+  $("#nav-admin").addEventListener("click", showAdminView);
+  $("#admin-refresh").addEventListener("click", refreshAdmin);
+  $("#admin-detail-close").addEventListener("click", () => {
+    $("#admin-detail").hidden = true;
+  });
+  let adminTimer = null;
+  $("#admin-task-search").addEventListener("input", () => {
+    clearTimeout(adminTimer);
+    adminTimer = setTimeout(searchAdminTasks, 250);
+  });
+  $("#empty-new-board").addEventListener("click", createBoard);
   $("#new-board-btn").addEventListener("click", createBoard);
   $("#add-column-btn").addEventListener("click", () => state.board ? addColumn() : toast("Сначала создайте доску"));
   $("#add-task-btn").addEventListener("click", () => {
@@ -912,24 +1528,29 @@ async function start() {
   $("#board-title").title = "Двойной клик — переименовать";
 
   let searchTimer = null;
+  const applyFilters = () => {
+    if (state.view === "board") renderBoard();
+    else refreshMyTasks();
+  };
   $("#search").addEventListener("input", (e) => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.filters.q = e.target.value.trim();
-      renderBoard();
+      applyFilters();
     }, 150);
   });
   $("#priority-filter").addEventListener("change", (e) => {
     state.filters.priority = e.target.value;
-    renderBoard();
+    applyFilters();
   });
 
   // попытка восстановить сессию
   try {
     const me = await api("/api/auth/me");
-    state.user = { username: me.username };
+    state.user = { username: me.username, role: me.role || "user" };
     state.csrf = me.csrf_token;
-    $("#whoami").textContent = `👤 ${me.username}`;
+    setUserName(me.username);
+    applyRole(state.user);
     showApp();
     await boot();
   } catch {

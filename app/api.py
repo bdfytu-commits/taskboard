@@ -32,7 +32,8 @@ def get_board_or_404(board_id: int):
 
 
 def serialize_task(row, tags: list[str] | None = None,
-                   subtasks: list[dict] | None = None) -> dict:
+                   subtasks: list[dict] | None = None,
+                   comments: int = 0) -> dict:
     return {
         "id": row["id"],
         "board_id": row["board_id"],
@@ -46,6 +47,7 @@ def serialize_task(row, tags: list[str] | None = None,
         "updated_at": row["updated_at"],
         "tags": tags or [],
         "subtasks": subtasks or [],
+        "comments": comments,
     }
 
 
@@ -79,8 +81,15 @@ def load_tasks(board_id: int) -> list[dict]:
     for r in sub_rows:
         subs_by_task.setdefault(r["task_id"], []).append(serialize_subtask(r))
 
+    cmt_rows = db.execute(
+        f"SELECT task_id, COUNT(*) AS n FROM comments WHERE task_id IN ({marks}) GROUP BY task_id",
+        ids,
+    ).fetchall()
+    cmt_by_task = {r["task_id"]: r["n"] for r in cmt_rows}
+
     return [
-        serialize_task(r, by_task.get(r["id"], []), subs_by_task.get(r["id"], []))
+        serialize_task(r, by_task.get(r["id"], []), subs_by_task.get(r["id"], []),
+                       cmt_by_task.get(r["id"], 0))
         for r in rows
     ]
 
@@ -528,7 +537,7 @@ def create_task(board_id):
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     return jsonify(
-        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id))
+        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id), comment_count(task_id))
     ), 201
 
 
@@ -605,7 +614,7 @@ def update_task(task_id):
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     return jsonify(
-        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id))
+        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id), comment_count(task_id))
     )
 
 
@@ -742,7 +751,7 @@ def move_task_endpoint(task_id):
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     return jsonify(
-        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id))
+        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id), comment_count(task_id))
     )
 
 
@@ -885,7 +894,8 @@ def search():
     rows = get_db().execute(" ".join(sql), params).fetchall()
     results = []
     for r in rows:
-        item = serialize_task(r, task_tags(r["id"]), task_subtasks(r["id"]))
+        item = serialize_task(r, task_tags(r["id"]), task_subtasks(r["id"]),
+                              comment_count(r["id"]))
         item["board_name"] = r["board_name"]
         item["column_name"] = r["column_name"]
         results.append(item)
@@ -951,3 +961,182 @@ def board_stats(board_id):
         done=done,
         done_percent=round(done * 100 / len(tasks), 1) if tasks else 0.0,
     )
+
+
+# ------------------------------------------------------------------------ comments
+MAX_COMMENT = 2000
+
+
+def comment_count(task_id: int) -> int:
+    return get_db().execute(
+        "SELECT COUNT(*) AS n FROM comments WHERE task_id = ?", (task_id,)
+    ).fetchone()["n"]
+
+
+def load_comments(task_id: int) -> list[dict]:
+    rows = get_db().execute(
+        """SELECT c.id, c.task_id, c.body, c.created_at, u.username
+             FROM comments c
+             JOIN users u ON u.id = c.user_id
+            WHERE c.task_id = ?
+            ORDER BY c.created_at, c.id""",
+        (task_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_comment_or_404(comment_id: int):
+    return get_db().execute(
+        """SELECT c.* FROM comments c
+             JOIN tasks t ON t.id = c.task_id
+             JOIN boards b ON b.id = t.board_id
+            WHERE c.id = ? AND b.user_id = ?""",
+        (comment_id, current_user_id()),
+    ).fetchone()
+
+
+@api.get("/tasks/<int:task_id>/comments")
+@login_required
+def list_comments(task_id):
+    if get_task_or_404(task_id) is None:
+        return bad("Задача не найдена", 404)
+    items = load_comments(task_id)
+    return jsonify(comments=items, count=len(items))
+
+
+@api.post("/tasks/<int:task_id>/comments")
+@login_required
+def create_comment(task_id):
+    if get_task_or_404(task_id) is None:
+        return bad("Задача не найдена", 404)
+    data = request.get_json(silent=True) or {}
+    body = str(data.get("body", "")).strip()
+    if not body:
+        return bad("Комментарий не может быть пустым")
+    if len(body) > MAX_COMMENT:
+        return bad(f"Комментарий слишком длинный (макс. {MAX_COMMENT})")
+
+    db = get_db()
+    cur = db.execute(
+        "INSERT INTO comments (task_id, user_id, body) VALUES (?, ?, ?)",
+        (task_id, current_user_id(), body),
+    )
+    db.execute(
+        "UPDATE tasks SET updated_at = datetime('now') WHERE id = ?", (task_id,)
+    )
+    db.commit()
+    row = db.execute(
+        """SELECT c.id, c.task_id, c.body, c.created_at, u.username
+             FROM comments c JOIN users u ON u.id = c.user_id
+            WHERE c.id = ?""",
+        (cur.lastrowid,),
+    ).fetchone()
+    return jsonify(comment=dict(row)), 201
+
+
+@api.delete("/comments/<int:comment_id>")
+@login_required
+def delete_comment(comment_id):
+    comment = get_comment_or_404(comment_id)
+    if comment is None:
+        return bad("Комментарий не найден", 404)
+    db = get_db()
+    db.execute("DELETE FROM comments WHERE id = ?", (comment_id,))
+    db.commit()
+    return jsonify(ok=True)
+
+
+# ------------------------------------------------------------------------ my tasks
+BUCKETS = ("overdue", "today", "week", "later", "none")
+
+
+def due_bucket(due_date: str | None, today: date) -> str:
+    if not due_date:
+        return "none"
+    try:
+        due = date.fromisoformat(due_date)
+    except ValueError:
+        return "none"
+    if due < today:
+        return "overdue"
+    if due == today:
+        return "today"
+    if due <= today + timedelta(days=7):
+        return "week"
+    return "later"
+
+
+@api.get("/my-tasks")
+@login_required
+def my_tasks():
+    """Задачи по всем доскам — общий поток для вкладки «Мои задачи»."""
+    args = request.args
+    q = str(args.get("q", "")).strip().lower()
+    priority = args.get("priority")
+    period = str(args.get("period", ""))
+    if priority and priority not in PRIORITIES:
+        return bad(f"priority должен быть одним из: {', '.join(PRIORITIES)}")
+    if period and period != "all" and period not in BUCKETS:
+        return bad(f"period должен быть одним из: all, {', '.join(BUCKETS)}")
+
+    db = get_db()
+    rows = db.execute(
+        """SELECT t.*, b.name AS board_name, b.color AS board_color,
+                  c.name AS column_name,
+                  (SELECT position FROM board_columns WHERE id = t.column_id) AS col_pos,
+                  (SELECT MAX(position) FROM board_columns WHERE board_id = b.id) AS last_pos
+             FROM tasks t
+             JOIN boards b ON b.id = t.board_id
+             JOIN board_columns c ON c.id = t.column_id
+            WHERE b.user_id = ?
+            ORDER BY t.due_date IS NULL, t.due_date, t.id""",
+        (current_user_id(),),
+    ).fetchall()
+
+    today = date.today()
+    summary = {**{b: 0 for b in BUCKETS}, "done": 0, "total": 0}
+    results = []
+    prio_rank = {p: i for i, p in enumerate(PRIORITIES)}
+
+    for r in rows:
+        finished = r["col_pos"] == r["last_pos"]
+        bucket = due_bucket(r["due_date"], today)
+        if finished:
+            summary["done"] += 1
+        else:
+            summary[bucket] += 1
+        summary["total"] += 1
+
+        if period:
+            if period == "all":
+                if finished:
+                    continue
+            elif finished or bucket != period:
+                continue
+        if priority and r["priority"] != priority:
+            continue
+        if q:
+            tags = task_tags(r["id"])
+            hay = " ".join([r["title"], r["description"], *tags]).lower()
+            if q not in hay:
+                continue
+
+        item = serialize_task(r, task_tags(r["id"]), task_subtasks(r["id"]),
+                              comment_count(r["id"]))
+        item["board_name"] = r["board_name"]
+        item["board_color"] = r["board_color"]
+        item["column_name"] = r["column_name"]
+        item["bucket"] = bucket
+        item["finished"] = finished
+        results.append(item)
+
+    # просроченные и срочные — вперёд, дальше по дате и приоритету
+    bucket_rank = {b: i for i, b in enumerate(BUCKETS)}
+    results.sort(key=lambda t: (
+        0 if not t["finished"] else 1,
+        bucket_rank[t["bucket"]],
+        t["due_date"] or "9999-99-99",
+        prio_rank.get(t["priority"], 9),
+    ))
+    results = results[:300]
+    return jsonify(results=results, count=len(results), summary=summary)

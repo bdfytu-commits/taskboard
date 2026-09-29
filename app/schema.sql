@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     username      TEXT    NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT    NOT NULL,
+    role          TEXT    NOT NULL DEFAULT 'user'
+                  CHECK (role IN ('user', 'admin')),
     created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -44,6 +46,14 @@ CREATE TABLE IF NOT EXISTS subtasks (
     position INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    body       TEXT    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS tags (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -63,3 +73,4 @@ CREATE INDEX IF NOT EXISTS idx_tasks_column   ON tasks(column_id, position);
 CREATE INDEX IF NOT EXISTS idx_tasks_board    ON tasks(board_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_task ON task_tags(task_id);
 CREATE INDEX IF NOT EXISTS idx_subtasks_task  ON subtasks(task_id, position);
+CREATE INDEX IF NOT EXISTS idx_comments_task  ON comments(task_id, created_at);

@@ -12,8 +12,13 @@
   <!-- ================= AUTH ================= -->
   <section id="auth-view" class="auth" hidden>
     <div class="auth-card">
-      <div class="brand brand-lg">🗂️ TaskBoard</div>
-      <p class="muted">Доски задач с drag &amp; drop, тегами и статистикой</p>
+      <div class="auth-brand">
+        <div class="logo-tile">🗂️</div>
+        <div>
+          <div class="brand brand-lg">TaskBoard</div>
+        </div>
+      </div>
+      <p class="muted">Доски задач с drag &amp; drop, чеклистами, комментариями и статистикой</p>
 
       <div class="tabs">
         <button class="tab active" data-tab="login">Вход</button>
@@ -32,33 +37,71 @@
         <p id="auth-error" class="error" hidden></p>
         <button type="submit" class="btn primary block" id="auth-submit">Войти</button>
       </form>
+
+      <div id="demo-hint" class="demo-hint" hidden>
+        Демо-режим: <b>demo / demo1234</b> · админ: <b>admin / admin1234</b><br>
+        нажмите, чтобы подставить данные
+      </div>
     </div>
   </section>
 
   <!-- ================= APP ================= -->
   <div id="app-view" class="layout" hidden>
     <aside class="sidebar">
-      <div class="brand">🗂️ TaskBoard</div>
+      <div class="side-brand">
+        <div class="logo-tile sm">🗂️</div>
+        <div class="brand">TaskBoard</div>
+      </div>
 
-      <div class="side-section">
+      <nav class="nav">
+        <div id="nav-my" class="nav-item" title="Все задачи по всем доскам">
+          <span class="ico">🎯</span>
+          <span>Мои задачи</span>
+          <span id="nav-my-badge" class="badge" hidden>0</span>
+        </div>
+        <div id="nav-admin" class="nav-item" title="Данные всех пользователей" hidden>
+          <span class="ico">🛡️</span>
+          <span>Админ-панель</span>
+        </div>
+      </nav>
+
+      <div class="side-section" style="display:flex;flex-direction:column;min-height:0;flex:1">
         <div class="side-title">Доски</div>
-        <ul id="board-list" class="board-list"></ul>
-        <button id="new-board-btn" class="btn ghost block">＋ Новая доска</button>
+        <div class="side-scroll">
+          <ul id="board-list" class="board-list"></ul>
+          <button id="new-board-btn" class="btn ghost block">＋ Новая доска</button>
+        </div>
       </div>
 
       <div class="side-footer">
-        <div id="whoami" class="muted"></div>
-        <div class="muted hints">/ — поиск · N — задача · колонки и карточки перетаскиваются</div>
+        <div class="user-card">
+          <div id="avatar" class="avatar">?</div>
+          <div>
+            <div id="whoami" class="uname">—</div>
+            <div id="urole" class="urole">владелец рабочего пространства</div>
+          </div>
+          <span class="spacer"></span>
+          <button id="theme-btn" class="icon-btn" title="Светлая/тёмная тема">🌙</button>
+        </div>
+        <div class="muted hints">
+          <kbd>/</kbd> — поиск · <kbd>N</kbd> — задача · перетаскивайте карточки и колонки
+        </div>
         <button id="logout-btn" class="btn ghost block">Выйти</button>
       </div>
     </aside>
 
     <main class="main">
       <header class="topbar">
-        <h1 id="board-title">Доска</h1>
+        <div class="title-wrap">
+          <span id="board-dot" class="board-dot" hidden></span>
+          <h1 id="board-title" title="Двойной клик — переименовать">Доска</h1>
+        </div>
 
         <div class="toolbar">
-          <input id="search" class="input" type="search" placeholder="Поиск задач…" title="Фильтр по названию, описанию и тегам">
+          <div class="search-wrap">
+            <input id="search" class="input" type="search" placeholder="Поиск задач…"
+                   title="Фильтр по названию, описанию и тегам">
+          </div>
           <select id="priority-filter" class="input" title="Фильтр по приоритету">
             <option value="">Все приоритеты</option>
             <option value="urgent">🔴 Срочный</option>
@@ -66,13 +109,13 @@
             <option value="medium">🟡 Средний</option>
             <option value="low">🟢 Низкий</option>
           </select>
-          <button id="stats-btn" class="btn ghost" title="Статистика доски">📊 Статистика</button>
+          <button id="stats-btn" class="btn" title="Статистика доски">📊 <span>Статистика</span></button>
           <select id="export" class="input" title="Экспорт доски">
             <option value="">Экспорт…</option>
             <option value="md">Markdown (.md)</option>
             <option value="json">JSON (.json)</option>
           </select>
-          <button id="add-column-btn" class="btn ghost" title="Добавить колонку">＋ Колонка</button>
+          <button id="add-column-btn" class="btn" title="Добавить колонку">＋ <span>Колонка</span></button>
           <button id="add-task-btn" class="btn primary" title="Добавить задачу">＋ Задача</button>
         </div>
       </header>
@@ -81,9 +124,68 @@
 
       <div id="columns" class="columns"></div>
 
+      <div id="my-view" class="my-view" hidden>
+        <div id="my-filters" class="my-filters"></div>
+        <div id="my-list"></div>
+      </div>
+
+      <div id="admin-view" class="admin-view" hidden>
+        <div class="admin-intro">
+          <h2>Админ-панель</h2>
+          <p class="muted">Все данные пользователей хранятся на сервере: доски, задачи,
+             чеклисты и комментарии. Здесь — обзор и управление аккаунтами.</p>
+        </div>
+
+        <div id="admin-summary" class="stat-grid"></div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Пользователи <span id="admin-users-n" class="muted"></span></h3>
+            <button id="admin-refresh" class="btn ghost">↻ Обновить</button>
+          </div>
+          <div class="table-wrap">
+            <table class="table" id="admin-users">
+              <thead>
+                <tr>
+                  <th>Пользователь</th>
+                  <th>Роль</th>
+                  <th class="num">Доски</th>
+                  <th class="num">Задачи</th>
+                  <th class="num">Комменты</th>
+                  <th>Активность</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" id="admin-detail" hidden>
+          <div class="panel-head">
+            <h3 id="admin-detail-title">Данные пользователя</h3>
+            <button class="btn ghost" id="admin-detail-close">✕ Закрыть</button>
+          </div>
+          <div id="admin-detail-body"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h3>Поиск задач по всем пользователям</h3>
+            <input id="admin-task-search" class="input" type="search"
+                   placeholder="Название или описание задачи…">
+          </div>
+          <div id="admin-search-results" class="search-results muted">Введите запрос —
+             покажем задачи всех аккаунтов.</div>
+        </section>
+      </div>
+
       <div id="empty-state" class="empty" hidden>
         <div class="empty-icon">🗒️</div>
-        <p>Нет досок. Создайте первую кнопкой «Новая доска».</p>
+        <h3>Здесь пока пусто</h3>
+        <p>Создайте первую доску кнопкой «Новая доска» в левой панели —<br>
+           задачи, сроки и статистика появятся сразу.</p>
+        <button id="empty-new-board" class="btn primary">＋ Создать доску</button>
       </div>
     </main>
   </div>
@@ -135,6 +237,19 @@
             <input id="subtask-input" placeholder="Новая подзадача…" maxlength="200"
                    autocomplete="off">
             <button type="button" id="subtask-add" class="btn ghost">Добавить</button>
+          </div>
+        </div>
+
+        <div class="comments-block" id="comments-block" hidden>
+          <div class="sub-head">
+            <span>Обсуждение</span>
+            <span id="comment-counter" class="muted"></span>
+          </div>
+          <ul id="comment-list" class="comment-list"></ul>
+          <div class="comment-form">
+            <textarea id="comment-input" placeholder="Написать комментарий…" maxlength="2000"
+                      rows="2"></textarea>
+            <button type="button" id="comment-add" class="btn primary">Отправить</button>
           </div>
         </div>
 

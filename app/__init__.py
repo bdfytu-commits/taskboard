@@ -5,6 +5,7 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request
 
 from . import db
+from .admin import bp as admin_bp
 from .api import api
 from .auth import bp as auth_bp
 
@@ -33,6 +34,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     db.init_app(app)
     app.register_blueprint(auth_bp)
     app.register_blueprint(api)
+    app.register_blueprint(admin_bp)
 
     with app.app_context():
         db.init_db()

@@ -71,7 +71,11 @@ try {
   log("вход и загрузка доски", true);
 
   // 3. Счётчик задач в сайдбаре не раздут (fan-out JOIN)
-  const sideCount = await page.locator(".board-list li .count").first().textContent();
+  const sideCount = await page
+    .locator(`.board-list li:has-text("${BOARD_NAME}")`)
+    .first()
+    .locator(".count")
+    .textContent();
   const totalCards = await page.locator(".card").count();
   log(
     "счётчик задач в сайдбаре совпадает с карточками",
@@ -241,7 +245,89 @@ try {
     `${dialogMsg.slice(0, 30)} · заголовок: «${titleAfter.trim()}»`,
   );
 
-  // 13. Чистая консоль
+  // 13. Комментарии к задаче
+  await page.locator(`.board-list li:has-text("${BOARD_NAME}")`).first().click();
+  await page.waitForSelector(".column", { timeout: 5000 });
+  await page.locator(".column .card").first().click();
+  await page.waitForSelector("#task-modal:not([hidden])");
+  await page.waitForSelector("#comment-list li", { timeout: 5000 });
+  const hadCount = await page.locator("#comment-list li.comment").count();
+  await page.fill("#comment-input", "Комментарий из E2E");
+  await page.click("#comment-add");
+  await page.waitForFunction(
+    () => document.body.textContent.includes("Комментарий из E2E"),
+    null,
+    { timeout: 5000 },
+  );
+  const cmtCount = await page.locator("#comment-list li.comment").count();
+  log(
+    "комментарии: отправка и отображение",
+    cmtCount === hadCount + 1,
+    `было/стало: ${hadCount} → ${cmtCount}`,
+  );
+  await page.screenshot({ path: `${OUT}/08-comments.png` });
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#task-modal", { state: "hidden", timeout: 5000 });
+
+  // 14. Вкладка «Мои задачи»
+  await page.click("#nav-my");
+  await page.waitForSelector("#my-view:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector("#my-list .my-card", { timeout: 5000 });
+  const buckets = await page.locator("#my-list .bucket").count();
+  const pills = await page.locator("#my-filters .pill-tab").count();
+  const navBadge = await page.textContent("#nav-my-badge");
+  log(
+    "вкладка «Мои задачи»",
+    buckets >= 1 && pills === 6 && Number(navBadge) > 0,
+    `групп ${buckets}, фильтров ${pills}, бейдж ${navBadge}`,
+  );
+  await page.screenshot({ path: `${OUT}/09-my-tasks.png` });
+
+  // 15. Переключение темы
+  await page.click("#theme-btn");
+  const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+  await page.click("#theme-btn");
+  const themeBack = await page.evaluate(() => document.documentElement.dataset.theme);
+  log("светлая/тёмная тема", theme === "dark" && themeBack === "light", `${theme} → ${themeBack}`);
+
+  // 16. Админ-панель: у демо-юзера её нет, у админа — есть и открывается
+  const adminHiddenForUser = await page.evaluate(
+    () => document.querySelector("#nav-admin").hidden,
+  );
+  await page.click("#logout-btn");
+  await page.waitForSelector("#auth-view:not([hidden])", { timeout: 5000 });
+  await page.fill('input[name="username"]', process.env.TASKBOARD_ADMIN || "admin");
+  await page.fill('input[name="password"]', process.env.TASKBOARD_ADMIN_PASS || "admin1234");
+  await page.click("#auth-submit");
+  await page.waitForSelector("#app-view:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector("#nav-admin:not([hidden])", { timeout: 5000 });
+  await page.click("#nav-admin");
+  await page.waitForSelector("#admin-view:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector("#admin-users tbody tr", { timeout: 5000 });
+  const aCards = await page.locator("#admin-summary .stat-card").count();
+  const aUsers = await page.locator("#admin-users tbody tr").count();
+  const aAdmins = await page.locator("#admin-users .role-chip.admin").count();
+  log(
+    "админ-панель: сводка, пользователи, роли",
+    adminHiddenForUser && aCards >= 6 && aUsers >= 2 && aAdmins >= 1,
+    `скрыта у юзера: ${adminHiddenForUser}, карточек ${aCards}, юзеров ${aUsers}, админов ${aAdmins}`,
+  );
+  await page.screenshot({ path: `${OUT}/10-admin.png` });
+
+  // 17. Карточка данных конкретного пользователя
+  await page.locator("#admin-users tbody tr").first().click();
+  await page.waitForSelector("#admin-detail:not([hidden])", { timeout: 5000 });
+  await page.waitForSelector("#admin-detail .admin-board", { timeout: 5000 });
+  const aBoards = await page.locator("#admin-detail .admin-board").count();
+  const aTasks = await page.locator("#admin-detail .admin-task").count();
+  log(
+    "админ-панель: данные пользователя",
+    aBoards >= 1 && aTasks >= 1,
+    `досок ${aBoards}, задач ${aTasks}`,
+  );
+  await page.screenshot({ path: `${OUT}/11-admin-user.png` });
+
+  // 18. Чистая консоль
   log("консоль без ошибок", errors.length === 0, errors.slice(0, 3).join(" | "));
 } catch (e) {
   log("исключение", false, String(e).slice(0, 300));

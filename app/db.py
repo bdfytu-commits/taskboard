@@ -37,7 +37,15 @@ def init_db() -> None:
     db = get_db()
     schema = (Path(current_app.root_path) / "schema.sql").read_text(encoding="utf-8")
     db.executescript(schema)
+    _migrate(db)
     db.commit()
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    """Лёгкие миграции для уже существующих баз."""
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)")}
+    if "role" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
 
 
 def init_app(app) -> None:

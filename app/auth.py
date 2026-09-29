@@ -94,8 +94,31 @@ def login_required(view):
     return wrapped
 
 
-def _user_payload(username: str) -> dict:
-    return {"username": username, "csrf_token": get_csrf_token()}
+def admin_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        uid = current_user_id()
+        if uid is None:
+            return jsonify(error="Требуется вход"), 401
+        row = get_db().execute(
+            "SELECT role FROM users WHERE id = ?", (uid,)
+        ).fetchone()
+        if row is None or row["role"] != "admin":
+            return jsonify(error="Доступ только для администратора"), 403
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def user_role(user_id: int) -> str:
+    row = get_db().execute(
+        "SELECT role FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    return row["role"] if row else "user"
+
+
+def _user_payload(username: str, role: str = "user") -> dict:
+    return {"username": username, "role": role, "csrf_token": get_csrf_token()}
 
 
 @bp.post("/register")
@@ -156,7 +179,7 @@ def login():
     limiter.reset(key)
     session.clear()
     session["user_id"] = user["id"]
-    return jsonify(_user_payload(user["username"]))
+    return jsonify(_user_payload(user["username"], user["role"]))
 
 
 @bp.post("/logout")
@@ -171,9 +194,14 @@ def me():
     if uid is None:
         return jsonify(error="Требуется вход"), 401
     user = get_db().execute(
-        "SELECT id, username FROM users WHERE id = ?", (uid,)
+        "SELECT id, username, role FROM users WHERE id = ?", (uid,)
     ).fetchone()
     if user is None:
         session.clear()
         return jsonify(error="Требуется вход"), 401
-    return jsonify(id=user["id"], username=user["username"], csrf_token=get_csrf_token())
+    return jsonify(
+        id=user["id"],
+        username=user["username"],
+        role=user["role"],
+        csrf_token=get_csrf_token(),
+    )
