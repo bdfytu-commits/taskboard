@@ -188,6 +188,56 @@ def logout():
     return jsonify(ok=True)
 
 
+@bp.post("/change-password")
+def change_password():
+    """Смена собственного пароля: текущий пароль + новый."""
+    uid = current_user_id()
+    if uid is None:
+        return jsonify(error="Требуется вход"), 401
+
+    key = _limit_key("change-password")
+    limited = _rate_limited(key)
+    if limited:
+        return limited
+
+    data = request.get_json(silent=True) or {}
+    current = str(data.get("current_password", ""))
+    new = str(data.get("new_password", ""))
+
+    if not current:
+        limiter.hit(key)
+        return jsonify(error="Укажите текущий пароль"), 400
+    if not (MIN_PASSWORD <= len(new) <= MAX_PASSWORD):
+        limiter.hit(key)
+        return jsonify(
+            error=f"Новый пароль должен быть от {MIN_PASSWORD} до {MAX_PASSWORD} символов"
+        ), 400
+    if current == new:
+        limiter.hit(key)
+        return jsonify(error="Новый пароль должен отличаться от текущего"), 400
+
+    db = get_db()
+    user = db.execute(
+        "SELECT id, password_hash FROM users WHERE id = ?", (uid,)
+    ).fetchone()
+    if user is None:
+        session.clear()
+        return jsonify(error="Требуется вход"), 401
+    if not check_password_hash(user["password_hash"], current):
+        limiter.hit(key)
+        return jsonify(error="Текущий пароль неверен"), 403
+
+    limiter.reset(key)
+    db.execute(
+        "UPDATE users SET password_hash = ? WHERE id = ?",
+        (generate_password_hash(new), uid),
+    )
+    db.commit()
+    # выпускаем новый CSRF-токен, чтобы старая страница не ломала запросы
+    session.pop("csrf_token", None)
+    return jsonify(ok=True, message="Пароль обновлён", csrf_token=get_csrf_token())
+
+
 @bp.get("/me")
 def me():
     uid = current_user_id()

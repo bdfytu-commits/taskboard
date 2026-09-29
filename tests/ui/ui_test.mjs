@@ -290,7 +290,17 @@ try {
   const themeBack = await page.evaluate(() => document.documentElement.dataset.theme);
   log("светлая/тёмная тема", theme === "dark" && themeBack === "light", `${theme} → ${themeBack}`);
 
-  // 16. Админ-панель: у демо-юзера её нет, у админа — есть и открывается
+  // 16. Смена пароля: диалог с полями-паролями
+  await page.click("#change-pass-btn");
+  await page.waitForSelector("#dialog-modal:not([hidden])", { timeout: 5000 });
+  const passFields = await page.locator(
+    '#dialog-fields input[type="password"]',
+  ).count();
+  await page.keyboard.press("Escape");
+  await page.waitForSelector("#dialog-modal", { state: "hidden", timeout: 5000 });
+  log("смена пароля: диалог с двумя полями", passFields === 2, `полей ${passFields}`);
+
+  // 17. Админ-панель: у демо-юзера её нет, у админа — есть и открывается
   const adminHiddenForUser = await page.evaluate(
     () => document.querySelector("#nav-admin").hidden,
   );

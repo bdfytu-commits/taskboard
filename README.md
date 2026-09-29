@@ -16,6 +16,8 @@ drag & drop, чеклисты, теги, приоритеты, сроки, по�
 ## Возможности
 
 - 🔐 Регистрация / вход, сессии, CSRF-защита изменяющих запросов, rate limiting (429)
+- 🔑 **Смена собственного пароля** из интерфейса: текущий + новый пароль,
+  проверки длины и отличия, защита от перебора
 - 📋 Несколько досок, колонки (добавление, переименование, **перетаскивание порядка**, удаление)
 - 🃏 Задачи: название, описание, 4 уровня приоритета, срок, теги
 - ✅ **Подзадачи-чеклисты** внутри задачи: прогресс на карточке и в статистике
@@ -53,13 +55,13 @@ python3 -m venv .venv
 .venv/bin/python seed.py
 ```
 
-Тесты (85 шт.):
+Тесты (91 шт.):
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-E2E-тесты интерфейса (Playwright, headless Chromium, 22 проверки):
+E2E-тесты интерфейса (Playwright, headless Chromium, 23 проверки):
 
 ```bash
 npm install && npx playwright install chromium
@@ -112,6 +114,7 @@ taskboard/
 | POST | `/api/auth/register` | регистрация `{username, password}` |
 | POST | `/api/auth/login` | вход |
 | POST | `/api/auth/logout` | выход |
+| POST | `/api/auth/change-password` | смена пароля `{current_password, new_password}` |
 | GET | `/api/auth/me` | текущий пользователь + CSRF-токен |
 | GET / POST | `/api/boards` | список / создание доски |
 | GET / PATCH / DELETE | `/api/boards/{id}` | доска с колонками и задачами |

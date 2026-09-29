@@ -1490,16 +1490,17 @@ function dialog({ title, message = "", fields = [], okText = "ОК", cancelText 
           input, el("span", { text: f.label }),
         ]));
       } else {
+        const type = f.type === "password" ? "password" : "text";
         fieldsBox.append(el("label", { class: "field" }, [
           el("span", { text: f.label }),
           el("input", {
-            type: "text",
+            type,
             name: f.name,
             value: f.value ?? "",
             placeholder: f.placeholder ?? "",
             maxlength: String(f.maxlength ?? 100),
             ...(f.required === false ? {} : { required: "required" }),
-            autocomplete: "off",
+            autocomplete: f.autocomplete || "off",
           }),
         ]));
       }
@@ -1590,6 +1591,37 @@ function setupShortcuts() {
   });
 }
 
+/* ------------------------------------------------------------------ смена пароля */
+async function changePassword() {
+  const data = await inputDialog("Смена пароля", [
+    {
+      name: "current_password", label: "Текущий пароль", type: "password",
+      maxlength: 128, autocomplete: "current-password",
+    },
+    {
+      name: "new_password", label: "Новый пароль (минимум 6 символов)", type: "password",
+      maxlength: 128, autocomplete: "new-password",
+    },
+  ], "Сменить");
+  if (!data) return;
+
+  const current = data.current_password;
+  const next = data.new_password;
+  if (next.length < 6) return toast("Новый пароль: минимум 6 символов");
+  if (current === next) return toast("Новый пароль должен отличаться от текущего");
+
+  try {
+    const res = await api("/api/auth/change-password", {
+      method: "POST",
+      body: { current_password: current, new_password: next },
+    });
+    if (res.csrf_token) state.csrf = res.csrf_token;
+    toast(res.message || "Пароль обновлён", true);
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 /* ------------------------------------------------------------------ boot */
 async function boot() {
   await loadBoards();
@@ -1605,6 +1637,7 @@ async function start() {
   setupTheme();
 
   $("#nav-my").addEventListener("click", showMyView);
+  $("#change-pass-btn").addEventListener("click", changePassword);
   $("#nav-admin").addEventListener("click", showAdminView);
   $("#admin-refresh").addEventListener("click", refreshAdmin);
   $("#admin-detail-close").addEventListener("click", () => {
