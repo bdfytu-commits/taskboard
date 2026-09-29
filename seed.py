@@ -38,6 +38,18 @@ TASK_DESCRIPTIONS = {
     "Покрыть тестами": "pytest: auth, CRUD, перемещение задач, поиск, статистика.",
 }
 
+SUBTASKS = {
+    "Реализовать REST API": [
+        ("спроектировать эндпоинты", True),
+        ("написать хендлеры", True),
+        ("покрыть тестами", False),
+    ],
+    "Сделать drag & drop": [
+        ("карточки между колонками", True),
+        ("перестановка колонок", False),
+    ],
+}
+
 
 def main() -> None:
     app = create_app()
@@ -106,6 +118,12 @@ def main() -> None:
                     db.execute(
                         "INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?, ?)",
                         (task_id, tag_id),
+                    )
+                for s_pos, (s_text, s_done) in enumerate(SUBTASKS.get(title, [])):
+                    db.execute(
+                        """INSERT INTO subtasks (task_id, text, done, position)
+                           VALUES (?, ?, ?, ?)""",
+                        (task_id, s_text, int(s_done), s_pos),
                     )
 
         db.commit()

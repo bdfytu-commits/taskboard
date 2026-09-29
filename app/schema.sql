@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS subtasks (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id  INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    text     TEXT    NOT NULL,
+    done     INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS tags (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -54,3 +62,4 @@ CREATE INDEX IF NOT EXISTS idx_columns_board  ON board_columns(board_id, positio
 CREATE INDEX IF NOT EXISTS idx_tasks_column   ON tasks(column_id, position);
 CREATE INDEX IF NOT EXISTS idx_tasks_board    ON tasks(board_id);
 CREATE INDEX IF NOT EXISTS idx_task_tags_task ON task_tags(task_id);
+CREATE INDEX IF NOT EXISTS idx_subtasks_task  ON subtasks(task_id, position);

@@ -101,6 +101,26 @@ try {
   const renamed = titles.filter((t) => t.trim() === "Задача переименована").length;
   log("редактирование задачи", renamed === 1);
 
+  // 5b. Подзадачи: добавить, отметить, увидеть прогресс на карточке
+  await page.locator('.card:has-text("Задача переименована")').first().click();
+  await page.waitForSelector("#task-modal:not([hidden])");
+  await page.fill("#subtask-input", "сделать подпункт");
+  await page.press("#subtask-input", "Enter");
+  const listCount = await page.locator("#subtask-list li").count();
+  await page.check("#subtask-list li:first-child input[type='checkbox']");
+  const counter = (await page.textContent("#subtask-counter")).trim();
+  await page.screenshot({ path: `${OUT}/07-subtasks.png` });
+  await page.click('#task-form button[type="submit"]');
+  await page.waitForSelector("#task-modal", { state: "hidden", timeout: 5000 });
+  const badge = (
+    await page.locator('.card:has-text("Задача переименована") .sub-badge').textContent()
+  ).trim();
+  log(
+    "подзадачи: добавление и прогресс",
+    listCount === 1 && counter.includes("выполнено 1 из 1") && badge === "☑ 1/1",
+    `${counter} · ${badge}`,
+  );
+
   // 6. Drag & drop в соседнюю колонку
   const firstCard = page.locator(".column").nth(0).locator(".card").first();
   const title = (await firstCard.locator(".t").textContent()).trim();

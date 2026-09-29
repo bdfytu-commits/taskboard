@@ -124,6 +124,20 @@
             <input name="tags" placeholder="backend, bug">
           </label>
         </div>
+
+        <div class="subtasks-block">
+          <div class="sub-head">
+            <span>Подзадачи</span>
+            <span id="subtask-counter" class="muted"></span>
+          </div>
+          <ul id="subtask-list" class="subtask-list"></ul>
+          <div class="sub-row">
+            <input id="subtask-input" placeholder="Новая подзадача…" maxlength="200"
+                   autocomplete="off">
+            <button type="button" id="subtask-add" class="btn ghost">Добавить</button>
+          </div>
+        </div>
+
         <p id="task-error" class="error" hidden></p>
         <div class="modal-actions">
           <button type="button" id="task-delete" class="btn danger" hidden>Удалить</button>

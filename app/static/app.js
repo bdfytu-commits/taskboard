@@ -31,6 +31,7 @@ const state = {
   filters: { q: "", priority: ""},
   mode: "login",
   editingTask: null,    // объект задачи или null (создание)
+  editingSubtasks: [],  // черновик чеклиста в открытой модалке
   pendingColumnId: null,
 };
 
@@ -308,6 +309,15 @@ function renderCard(task) {
 
   const meta = el("div", { class: "meta" });
   for (const tag of task.tags || []) meta.append(el("span", { class: "tag", text: tag }));
+  const subs = task.subtasks || [];
+  if (subs.length) {
+    const done = subs.filter((s) => s.done).length;
+    meta.append(el("span", {
+      class: "sub-badge",
+      title: "Подзадачи",
+      text: `☑ ${done}/${subs.length}`,
+    }));
+  }
   if (due) meta.append(el("span", { class: `due ${due.cls}`, text: `📅 ${due.text}` }));
   meta.append(el("span", { class: "prio", title: label, text: icon }));
   children.push(meta);
@@ -502,6 +512,9 @@ function openTaskModal(task, columnId = null) {
   form.priority.value = task ? task.priority : "medium";
   form.due_date.value = task && task.due_date ? task.due_date : "";
   form.tags.value = task ? (task.tags || []).join(", ") : "";
+  state.editingSubtasks = (task ? task.subtasks || [] : []).map((s) => ({ ...s }));
+  renderSubtasks();
+  $("#subtask-input").value = "";
   if (task) colSelect.value = String(task.column_id);
   else if (columnId) colSelect.value = String(columnId);
 
@@ -514,7 +527,62 @@ function closeModals() {
   $("#stats-modal").hidden = true;
 }
 
+/* ------------------------------------------------------------------ подзадачи */
+function updateSubCounter() {
+  const total = state.editingSubtasks.length;
+  const done = state.editingSubtasks.filter((s) => s.done).length;
+  $("#subtask-counter").textContent = total ? `выполнено ${done} из ${total}` : "";
+}
+
+function renderSubtasks() {
+  const list = $("#subtask-list");
+  list.textContent = "";
+  state.editingSubtasks.forEach((s, i) => {
+    const cb = el("input", { type: "checkbox", title: "Отметить выполненной" });
+    cb.checked = !!s.done;
+    cb.addEventListener("change", () => {
+      s.done = cb.checked;
+      text.classList.toggle("done", s.done);
+      updateSubCounter();
+    });
+    const text = el("span", { class: `sub-text${s.done ? " done" : ""}`, text: s.text });
+    const del = el("button", {
+      class: "icon-btn",
+      text: "✕",
+      title: "Удалить подзадачу",
+      onclick: () => {
+        state.editingSubtasks.splice(i, 1);
+        renderSubtasks();
+      },
+    });
+    list.append(el("li", {}, [cb, text, del]));
+  });
+  updateSubCounter();
+}
+
+function addSubtask() {
+  const input = $("#subtask-input");
+  const value = input.value.trim();
+  if (!value) return;
+  if (state.editingSubtasks.length >= 50) {
+    toast("Не больше 50 подзадач");
+    return;
+  }
+  state.editingSubtasks.push({ text: value, done: false });
+  input.value = "";
+  renderSubtasks();
+  input.focus();
+}
+
 function setupTaskModal() {
+  $("#subtask-add").addEventListener("click", addSubtask);
+  $("#subtask-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();  // не отправлять форму
+      addSubtask();
+    }
+  });
+
   $("#task-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = e.currentTarget;
@@ -528,6 +596,11 @@ function setupTaskModal() {
       due_date: form.due_date.value || null,
       column_id: Number(form.column_id.value),
       tags,
+      subtasks: state.editingSubtasks.map((s) => ({
+        ...(s.id ? { id: s.id } : {}),
+        text: s.text,
+        done: !!s.done,
+      })),
     };
     try {
       if (state.editingTask) {
@@ -578,6 +651,7 @@ async function refreshStats() {
       ["Просрочено", s.overdue],
       ["Скоро срок", s.due_soon],
       ["Срочные", s.by_priority.urgent],
+      ["Подзадачи", `${s.subtasks_done}/${s.subtasks_total}`],
     ];
     for (const [k, v] of chips) bar.append(el("span", {}, [`${k}: `, el("b", { text: String(v) })]));
     bar.hidden = false;
@@ -598,6 +672,7 @@ async function showStats() {
       ["Просрочено", s.overdue],
       ["Срок ≤ 3 дн.", s.due_soon],
       ["Без срока", s.without_due],
+      ["Подзадачи", `${s.subtasks_done}/${s.subtasks_total}`],
     ];
     for (const [k, v] of cells) {
       grid.append(el("div", { class: "stat" }, [

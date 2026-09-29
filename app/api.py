@@ -31,7 +31,8 @@ def get_board_or_404(board_id: int):
     return row
 
 
-def serialize_task(row, tags: list[str] | None = None) -> dict:
+def serialize_task(row, tags: list[str] | None = None,
+                   subtasks: list[dict] | None = None) -> dict:
     return {
         "id": row["id"],
         "board_id": row["board_id"],
@@ -44,6 +45,7 @@ def serialize_task(row, tags: list[str] | None = None) -> dict:
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "tags": tags or [],
+        "subtasks": subtasks or [],
     }
 
 
@@ -68,7 +70,19 @@ def load_tasks(board_id: int) -> list[dict]:
     by_task: dict[int, list[str]] = {}
     for r in tag_rows:
         by_task.setdefault(r["task_id"], []).append(r["name"])
-    return [serialize_task(r, by_task.get(r["id"], [])) for r in rows]
+
+    sub_rows = db.execute(
+        f"SELECT * FROM subtasks WHERE task_id IN ({marks}) ORDER BY position, id",
+        ids,
+    ).fetchall()
+    subs_by_task: dict[int, list[dict]] = {}
+    for r in sub_rows:
+        subs_by_task.setdefault(r["task_id"], []).append(serialize_subtask(r))
+
+    return [
+        serialize_task(r, by_task.get(r["id"], []), subs_by_task.get(r["id"], []))
+        for r in rows
+    ]
 
 
 def load_columns(board_id: int) -> list[dict]:
@@ -120,6 +134,101 @@ def task_tags(task_id: int) -> list[str]:
         (task_id,),
     ).fetchall()
     return [r["name"] for r in rows]
+
+
+# ---------------------------------------------------------------- subtasks helpers
+MAX_SUBTASKS = 50
+MAX_SUBTASK_TEXT = 200
+
+
+def serialize_subtask(row) -> dict:
+    return {
+        "id": row["id"],
+        "task_id": row["task_id"],
+        "text": row["text"],
+        "done": bool(row["done"]),
+        "position": row["position"],
+    }
+
+
+def task_subtasks(task_id: int) -> list[dict]:
+    rows = get_db().execute(
+        "SELECT * FROM subtasks WHERE task_id = ? ORDER BY position, id",
+        (task_id,),
+    ).fetchall()
+    return [serialize_subtask(r) for r in rows]
+
+
+def clean_subtasks(items) -> list[tuple[int | None, str, bool]]:
+    """Нормализует присланный список подзадач или бросает ``ValueError``."""
+    if not isinstance(items, list):
+        raise ValueError("subtasks должен быть массивом")
+    if len(items) > MAX_SUBTASKS:
+        raise ValueError(f"Не больше {MAX_SUBTASKS} подзадач")
+    cleaned = []
+    for item in items:
+        if isinstance(item, str):
+            sid, text, done = None, item, False
+        elif isinstance(item, dict):
+            sid = item.get("id")
+            text = str(item.get("text", ""))
+            done = bool(item.get("done", False))
+        else:
+            raise ValueError("Подзадача должна быть строкой или объектом {id, text, done}")
+        text = text.strip()
+        if not text or len(text) > MAX_SUBTASK_TEXT:
+            raise ValueError(f"Текст подзадачи: 1-{MAX_SUBTASK_TEXT} символов")
+        cleaned.append((sid, text, done))
+    return cleaned
+
+
+def replace_task_subtasks(task_id: int, items) -> list[dict]:
+    """Полная замена списка подзадач (идемпотентно для фронтенда)."""
+    db = get_db()
+    cleaned = clean_subtasks(items)
+    existing = {
+        r["id"]
+        for r in db.execute(
+            "SELECT id FROM subtasks WHERE task_id = ?", (task_id,)
+        ).fetchall()
+    }
+    keep: set[int] = set()
+    for pos, (sid, text, done) in enumerate(cleaned):
+        if sid is not None and int(sid) in existing:
+            db.execute(
+                "UPDATE subtasks SET text = ?, done = ?, position = ? WHERE id = ? AND task_id = ?",
+                (text, int(done), pos, int(sid), task_id),
+            )
+            keep.add(int(sid))
+        else:
+            cur = db.execute(
+                "INSERT INTO subtasks (task_id, text, done, position) VALUES (?, ?, ?, ?)",
+                (task_id, text, int(done), pos),
+            )
+            keep.add(cur.lastrowid)
+    for stale in existing - keep:
+        db.execute("DELETE FROM subtasks WHERE id = ?", (stale,))
+    return task_subtasks(task_id)
+
+
+def get_task_or_404(task_id: int):
+    """Задача текущего пользователя или ``None`` (404 снаружи)."""
+    return get_db().execute(
+        """SELECT t.* FROM tasks t
+             JOIN boards b ON b.id = t.board_id
+            WHERE t.id = ? AND b.user_id = ?""",
+        (task_id, current_user_id()),
+    ).fetchone()
+
+
+def get_subtask_or_404(subtask_id: int):
+    return get_db().execute(
+        """SELECT s.* FROM subtasks s
+             JOIN tasks t ON t.id = s.task_id
+             JOIN boards b ON b.id = t.board_id
+            WHERE s.id = ? AND b.user_id = ?""",
+        (subtask_id, current_user_id()),
+    ).fetchone()
 
 
 def move_task(task_id: int, column_id: int, index: int | None) -> None:
@@ -381,6 +490,11 @@ def create_task(board_id):
         due_date = parse_due_date(data.get("due_date"))
     except ValueError as exc:
         return bad(str(exc))
+    if "subtasks" in data:
+        try:
+            clean_subtasks(data["subtasks"])
+        except ValueError as exc:
+            return bad(str(exc))
 
     db = get_db()
     column_id = data.get("column_id")
@@ -409,21 +523,20 @@ def create_task(board_id):
     )
     task_id = cur.lastrowid
     tags = replace_task_tags(task_id, data.get("tags", []) or [])
+    if "subtasks" in data:
+        replace_task_subtasks(task_id, data["subtasks"])
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    return jsonify(task=serialize_task(row, task_tags(task_id))), 201
+    return jsonify(
+        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id))
+    ), 201
 
 
 @api.patch("/tasks/<int:task_id>")
 @login_required
 def update_task(task_id):
     db = get_db()
-    row = db.execute(
-        """SELECT t.* FROM tasks t
-             JOIN boards b ON b.id = t.board_id
-            WHERE t.id = ? AND b.user_id = ?""",
-        (task_id, current_user_id()),
-    ).fetchone()
+    row = get_task_or_404(task_id)
     if row is None:
         return bad("Задача не найдена", 404)
     data = request.get_json(silent=True) or {}
@@ -483,21 +596,132 @@ def update_task(task_id):
             return bad("tags должен быть массивом")
         replace_task_tags(task_id, tags_raw)
 
+    if "subtasks" in data:
+        try:
+            replace_task_subtasks(task_id, data["subtasks"])
+        except ValueError as exc:
+            return bad(str(exc))
+
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    return jsonify(task=serialize_task(row, task_tags(task_id)))
+    return jsonify(
+        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id))
+    )
+
+
+@api.post("/tasks/<int:task_id>/subtasks")
+@login_required
+def create_subtask(task_id):
+    """Добавить одну подзадачу в конец списка."""
+    task = get_task_or_404(task_id)
+    if task is None:
+        return bad("Задача не найдена", 404)
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text", "")).strip()
+    if not text or len(text) > MAX_SUBTASK_TEXT:
+        return bad(f"Текст подзадачи: 1-{MAX_SUBTASK_TEXT} символов")
+
+    db = get_db()
+    count = db.execute(
+        "SELECT COUNT(*) AS n FROM subtasks WHERE task_id = ?", (task_id,)
+    ).fetchone()["n"]
+    if count >= MAX_SUBTASKS:
+        return bad(f"Не больше {MAX_SUBTASKS} подзадач")
+
+    pos = db.execute(
+        "SELECT COALESCE(MAX(position) + 1, 0) AS p FROM subtasks WHERE task_id = ?",
+        (task_id,),
+    ).fetchone()["p"]
+    cur = db.execute(
+        "INSERT INTO subtasks (task_id, text, done, position) VALUES (?, ?, 0, ?)",
+        (task_id, text, pos),
+    )
+    db.execute(
+        "UPDATE tasks SET updated_at = datetime('now') WHERE id = ?", (task_id,)
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM subtasks WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify(subtask=serialize_subtask(row)), 201
+
+
+@api.patch("/subtasks/<int:subtask_id>")
+@login_required
+def update_subtask(subtask_id):
+    sub = get_subtask_or_404(subtask_id)
+    if sub is None:
+        return bad("Подзадача не найдена", 404)
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return bad("Нет полей для обновления")
+
+    fields, values = [], []
+    if "text" in data:
+        text = str(data["text"]).strip()
+        if not text or len(text) > MAX_SUBTASK_TEXT:
+            return bad(f"Текст подзадачи: 1-{MAX_SUBTASK_TEXT} символов")
+        fields.append("text = ?")
+        values.append(text)
+    if "done" in data:
+        fields.append("done = ?")
+        values.append(1 if data["done"] else 0)
+    if "position" in data:
+        try:
+            new_pos = int(data["position"])
+        except (TypeError, ValueError):
+            return bad("position должен быть целым числом")
+        rows = get_db().execute(
+            "SELECT id FROM subtasks WHERE task_id = ? ORDER BY position",
+            (sub["task_id"],),
+        ).fetchall()
+        ids = [r["id"] for r in rows if r["id"] != subtask_id]
+        new_pos = max(0, min(new_pos, len(ids)))
+        ids.insert(new_pos, subtask_id)
+        for pos, sid in enumerate(ids):
+            get_db().execute(
+                "UPDATE subtasks SET position = ? WHERE id = ?", (pos, sid)
+            )
+        get_db().commit()
+        row = get_db().execute(
+            "SELECT * FROM subtasks WHERE id = ?", (subtask_id,)
+        ).fetchone()
+        return jsonify(subtask=serialize_subtask(row))
+
+    if not fields:
+        return bad("Нет полей для обновления")
+    values.append(subtask_id)
+    db = get_db()
+    db.execute(f"UPDATE subtasks SET {', '.join(fields)} WHERE id = ?", values)
+    db.execute(
+        "UPDATE tasks SET updated_at = datetime('now') WHERE id = ?", (sub["task_id"],)
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM subtasks WHERE id = ?", (subtask_id,)).fetchone()
+    return jsonify(subtask=serialize_subtask(row))
+
+
+@api.delete("/subtasks/<int:subtask_id>")
+@login_required
+def delete_subtask(subtask_id):
+    sub = get_subtask_or_404(subtask_id)
+    if sub is None:
+        return bad("Подзадача не найдена", 404)
+    db = get_db()
+    db.execute("DELETE FROM subtasks WHERE id = ?", (subtask_id,))
+    rows = db.execute(
+        "SELECT id FROM subtasks WHERE task_id = ? ORDER BY position, id",
+        (sub["task_id"],),
+    ).fetchall()
+    for pos, row in enumerate(rows):
+        db.execute("UPDATE subtasks SET position = ? WHERE id = ?", (pos, row["id"]))
+    db.commit()
+    return jsonify(ok=True)
 
 
 @api.post("/tasks/<int:task_id>/move")
 @login_required
 def move_task_endpoint(task_id):
     db = get_db()
-    row = db.execute(
-        """SELECT t.* FROM tasks t
-             JOIN boards b ON b.id = t.board_id
-            WHERE t.id = ? AND b.user_id = ?""",
-        (task_id, current_user_id()),
-    ).fetchone()
+    row = get_task_or_404(task_id)
     if row is None:
         return bad("Задача не найдена", 404)
     data = request.get_json(silent=True) or {}
@@ -517,19 +741,16 @@ def move_task_endpoint(task_id):
     move_task(task_id, col["id"], index)
     db.commit()
     row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    return jsonify(task=serialize_task(row, task_tags(task_id)))
+    return jsonify(
+        task=serialize_task(row, task_tags(task_id), task_subtasks(task_id))
+    )
 
 
 @api.delete("/tasks/<int:task_id>")
 @login_required
 def delete_task(task_id):
     db = get_db()
-    row = db.execute(
-        """SELECT t.id FROM tasks t
-             JOIN boards b ON b.id = t.board_id
-            WHERE t.id = ? AND b.user_id = ?""",
-        (task_id, current_user_id()),
-    ).fetchone()
+    row = get_task_or_404(task_id)
     if row is None:
         return bad("Задача не найдена", 404)
     db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
@@ -664,7 +885,7 @@ def search():
     rows = get_db().execute(" ".join(sql), params).fetchall()
     results = []
     for r in rows:
-        item = serialize_task(r, task_tags(r["id"]))
+        item = serialize_task(r, task_tags(r["id"]), task_subtasks(r["id"]))
         item["board_name"] = r["board_name"]
         item["column_name"] = r["column_name"]
         results.append(item)
@@ -680,6 +901,13 @@ def board_stats(board_id):
     db = get_db()
     columns = load_columns(board_id)
     tasks = load_tasks(board_id)
+    sub = db.execute(
+        """SELECT COUNT(*) AS total, COALESCE(SUM(s.done), 0) AS done
+             FROM subtasks s
+             JOIN tasks t ON t.id = s.task_id
+            WHERE t.board_id = ?""",
+        (board_id,),
+    ).fetchone()
 
     by_column = {c["id"]: 0 for c in columns}
     by_priority = {p: 0 for p in PRIORITIES}
@@ -718,6 +946,8 @@ def board_stats(board_id):
         overdue=overdue,
         due_soon=due_soon,
         without_due=without_due,
+        subtasks_total=sub["total"],
+        subtasks_done=sub["done"],
         done=done,
         done_percent=round(done * 100 / len(tasks), 1) if tasks else 0.0,
     )

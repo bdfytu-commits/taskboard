@@ -1,7 +1,10 @@
 # 🗂️ TaskBoard
 
+[![CI](https://github.com/bdfytu-commits/taskboard/actions/workflows/ci.yml/badge.svg)](https://github.com/bdfytu-commits/taskboard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Веб-приложение-канбан для управления задачами: доски, колонки, карточки с
-drag & drop, теги, приоритеты, сроки, поиск и статистика.
+drag & drop, чеклисты, теги, приоритеты, сроки, поиск, статистика и экспорт.
 
 **Стек:** Python 3.14 · Flask 3 · SQLite · vanilla JS (без сборки и фронтенд-фреймворков)
 
@@ -9,12 +12,15 @@ drag & drop, теги, приоритеты, сроки, поиск и стат�
 
 ## Возможности
 
-- 🔐 Регистрация / вход, сессии, CSRF-защита всех изменяющих запросов
-- 📋 Несколько досок, колонки (добавление, переименование, перестановка, удаление)
+- 🔐 Регистрация / вход, сессии, CSRF-защита изменяющих запросов, rate limiting (429)
+- 📋 Несколько досок, колонки (добавление, переименование, **перетаскивание порядка**, удаление)
 - 🃏 Задачи: название, описание, 4 уровня приоритета, срок, теги
+- ✅ **Подзадачи-чеклисты** внутри задачи: прогресс на карточке и в статистике
 - 🖱 Drag & drop карточек между колонками и внутри колонки (оптимистичный UI)
 - 🔎 Живой поиск по названию, описанию и тегам + фильтр по приоритету
-- 📊 Статистика доски: выполнено, просрочено, горящие сроки, разбивка по колонкам и приоритетам
+- 📊 Статистика доски: выполнено, просрочено, горящие сроки, подзадачи, разбивки
+- ⬇️ Экспорт доски: **Markdown**-чеклист или полный **JSON**-дамп
+- ⌨️ Горячие клавиши: `/` — поиск, `N` — новая задача, `Esc` — закрыть
 - 🛡 Изоляция данных: каждый пользователь видит только свои доски (проверяется тестами)
 
 ## Быстрый старт
@@ -31,18 +37,20 @@ python3 -m venv .venv
 .venv/bin/python seed.py
 ```
 
-Тесты (34 шт.):
+Тесты (55 шт.):
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-E2E-тесты интерфейса (Playwright, headless Chromium, 10 проверок):
+E2E-тесты интерфейса (Playwright, headless Chromium, 14 проверок):
 
 ```bash
 npm install && npx playwright install chromium
 make test-ui        # свежая база -> сервер -> seed -> скрипт -> скриншоты в docs/
 ```
+
+CI на GitHub Actions гоняет оба набора на каждый push.
 
 ## Структура
 
@@ -55,18 +63,22 @@ taskboard/
 ├── app/
 │   ├── __init__.py      # фабрика приложения, CSRF, обработчики ошибок
 │   ├── db.py            # подключение SQLite, инициализация схемы
-│   ├── schema.sql       # таблицы: users, boards, board_columns, tasks, tags
-│   ├── auth.py          # /api/auth/* , login_required
-│   ├── api.py           # /api/* — доски, колонки, задачи, поиск, статистика
+│   ├── schema.sql       # users, boards, board_columns, tasks, subtasks, tags
+│   ├── auth.py          # /api/auth/* , login_required, rate limiting
+│   ├── api.py           # /api/* — доски, колонки, задачи, подзадачи,
+│   │                    #   поиск, статистика, экспорт
 │   ├── templates/index.html
 │   └── static/          # app.js, style.css
 ├── tests/
 │   ├── conftest.py      # фикстуры: клиент с CSRF, пользователи, доски
-│   ├── test_auth.py     # регистрация, вход, CSRF
+│   ├── test_auth.py     # регистрация, вход, CSRF, rate limiting
 │   ├── test_boards.py   # доски и колонки, права доступа
 │   ├── test_tasks.py    # задачи, валидация, перемещение и порядок
+│   ├── test_subtasks.py # чеклисты: CRUD, лимиты, права, статистика
+│   ├── test_export.py   # экспорт в JSON и Markdown
 │   ├── test_search_stats.py
-│   └── ui/ui_test.mjs   # E2E: вход, CRUD, drag & drop, поиск, статистика
+│   └── ui/ui_test.mjs   # E2E: вход, CRUD, чеклисты, drag & drop, поиск,
+│                        #   статистика, колонки, экспорт, горячие клавиши
 └── docs/                # скриншоты E2E-прогона
 ```
 
@@ -85,17 +97,21 @@ taskboard/
 | POST | `/api/boards/{id}/tasks` | создать задачу |
 | PATCH / DELETE | `/api/tasks/{id}` | изменить/удалить задачу |
 | POST | `/api/tasks/{id}/move` | переместить `{column_id, index}` |
+| POST | `/api/tasks/{id}/subtasks` | добавить подзадачу |
+| PATCH / DELETE | `/api/subtasks/{id}` | отметить/переименовать/удалить подзадачу |
 | GET | `/api/search?q=&priority=&board_id=` | поиск задач |
+| GET | `/api/boards/{id}/export?format=json\|md` | выгрузка доски |
 | GET | `/api/tags` | теги пользователя со счётчиком использования |
 | GET | `/api/boards/{id}/stats` | статистика доски |
 | GET | `/api/health` | проверка работоспособности |
 
-Все ответы — JSON. Ошибки: `{"error": "..."}` со статусом 400/401/403/404/409.
+Все ответы — JSON. Ошибки: `{"error": "..."}` со статусом 400/401/403/404/409/429.
 
 ## Безопасность
 
 - Пароли — `werkzeug.security` (scrypt), не хранятся открытым текстом
 - Запросы `POST/PATCH/DELETE` требуют заголовок `X-CSRF-Token` из сессии
+- Rate limiting: 10 неудачных попыток входа/регистрации за минуту → 429
 - Каждый SQL-запрос к доскам/задачам фильтруется по `user_id`
 - Параметры запросов всегда идут через плейсхолдеры (`?`) — SQL-инъекции исключены
 - Секретный ключ генерируется в `instance/secret_key` при первом запуске
