@@ -1,0 +1,110 @@
+# 🗂️ TaskBoard
+
+Веб-приложение-канбан для управления задачами: доски, колонки, карточки с
+drag & drop, теги, приоритеты, сроки, поиск и статистика.
+
+**Стек:** Python 3.14 · Flask 3 · SQLite · vanilla JS (без сборки и фронтенд-фреймворков)
+
+---
+
+## Возможности
+
+- 🔐 Регистрация / вход, сессии, CSRF-защита всех изменяющих запросов
+- 📋 Несколько досок, колонки (добавление, переименование, перестановка, удаление)
+- 🃏 Задачи: название, описание, 4 уровня приоритета, срок, теги
+- 🖱 Drag & drop карточек между колонками и внутри колонки (оптимистичный UI)
+- 🔎 Живой поиск по названию, описанию и тегам + фильтр по приоритету
+- 📊 Статистика доски: выполнено, просрочено, горящие сроки, разбивка по колонкам и приоритетам
+- 🛡 Изоляция данных: каждый пользователь видит только свои доски (проверяется тестами)
+
+## Быстрый старт
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python run.py          # http://127.0.0.1:5000
+```
+
+Демо-данные (пользователь `demo`, пароль `demo1234`):
+
+```bash
+.venv/bin/python seed.py
+```
+
+Тесты (34 шт.):
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+E2E-тесты интерфейса (Playwright, headless Chromium, 10 проверок):
+
+```bash
+npm install && npx playwright install chromium
+make test-ui        # свежая база -> сервер -> seed -> скрипт -> скриншоты в docs/
+```
+
+## Структура
+
+```
+taskboard/
+├── run.py               # точка входа
+├── seed.py              # наполнение демо-данными
+├── Makefile             # install / run / test / test-ui / seed
+├── package.json         # playwright для E2E-тестов
+├── app/
+│   ├── __init__.py      # фабрика приложения, CSRF, обработчики ошибок
+│   ├── db.py            # подключение SQLite, инициализация схемы
+│   ├── schema.sql       # таблицы: users, boards, board_columns, tasks, tags
+│   ├── auth.py          # /api/auth/* , login_required
+│   ├── api.py           # /api/* — доски, колонки, задачи, поиск, статистика
+│   ├── templates/index.html
+│   └── static/          # app.js, style.css
+├── tests/
+│   ├── conftest.py      # фикстуры: клиент с CSRF, пользователи, доски
+│   ├── test_auth.py     # регистрация, вход, CSRF
+│   ├── test_boards.py   # доски и колонки, права доступа
+│   ├── test_tasks.py    # задачи, валидация, перемещение и порядок
+│   ├── test_search_stats.py
+│   └── ui/ui_test.mjs   # E2E: вход, CRUD, drag & drop, поиск, статистика
+└── docs/                # скриншоты E2E-прогона
+```
+
+## API
+
+| Метод | Путь | Описание |
+|---|---|---|
+| POST | `/api/auth/register` | регистрация `{username, password}` |
+| POST | `/api/auth/login` | вход |
+| POST | `/api/auth/logout` | выход |
+| GET | `/api/auth/me` | текущий пользователь + CSRF-токен |
+| GET / POST | `/api/boards` | список / создание доски |
+| GET / PATCH / DELETE | `/api/boards/{id}` | доска с колонками и задачами |
+| POST | `/api/boards/{id}/columns` | новая колонка |
+| PATCH / DELETE | `/api/columns/{id}` | переименовать/переставить/удалить |
+| POST | `/api/boards/{id}/tasks` | создать задачу |
+| PATCH / DELETE | `/api/tasks/{id}` | изменить/удалить задачу |
+| POST | `/api/tasks/{id}/move` | переместить `{column_id, index}` |
+| GET | `/api/search?q=&priority=&board_id=` | поиск задач |
+| GET | `/api/tags` | теги пользователя со счётчиком использования |
+| GET | `/api/boards/{id}/stats` | статистика доски |
+| GET | `/api/health` | проверка работоспособности |
+
+Все ответы — JSON. Ошибки: `{"error": "..."}` со статусом 400/401/403/404/409.
+
+## Безопасность
+
+- Пароли — `werkzeug.security` (scrypt), не хранятся открытым текстом
+- Запросы `POST/PATCH/DELETE` требуют заголовок `X-CSRF-Token` из сессии
+- Каждый SQL-запрос к доскам/задачам фильтруется по `user_id`
+- Параметры запросов всегда идут через плейсхолдеры (`?`) — SQL-инъекции исключены
+- Секретный ключ генерируется в `instance/secret_key` при первом запуске
+
+## Запуск в проде
+
+Встроенного сервера Flask достаточно для разработки. Для продакшена:
+
+```bash
+.venv/bin/pip install gunicorn
+gunicorn -w 4 -b 127.0.0.1:8000 "run:app"
+```

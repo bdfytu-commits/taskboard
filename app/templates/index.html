@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskBoard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+</head>
+<body>
+
+  <!-- ================= AUTH ================= -->
+  <section id="auth-view" class="auth" hidden>
+    <div class="auth-card">
+      <div class="brand brand-lg">🗂️ TaskBoard</div>
+      <p class="muted">Доски задач с drag &amp; drop, тегами и статистикой</p>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="login">Вход</button>
+        <button class="tab" data-tab="register">Регистрация</button>
+      </div>
+
+      <form id="auth-form" autocomplete="off">
+        <label>Имя пользователя
+          <input name="username" required minlength="3" maxlength="32"
+                 pattern="[A-Za-z0-9_.\-]{3,32}" placeholder="ivan">
+        </label>
+        <label>Пароль
+          <input name="password" type="password" required minlength="6" maxlength="128"
+                 placeholder="минимум 6 символов">
+        </label>
+        <p id="auth-error" class="error" hidden></p>
+        <button type="submit" class="btn primary block" id="auth-submit">Войти</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ================= APP ================= -->
+  <div id="app-view" class="layout" hidden>
+    <aside class="sidebar">
+      <div class="brand">🗂️ TaskBoard</div>
+
+      <div class="side-section">
+        <div class="side-title">Доски</div>
+        <ul id="board-list" class="board-list"></ul>
+        <button id="new-board-btn" class="btn ghost block">＋ Новая доска</button>
+      </div>
+
+      <div class="side-footer">
+        <div id="whoami" class="muted"></div>
+        <button id="logout-btn" class="btn ghost block">Выйти</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h1 id="board-title">Доска</h1>
+
+        <div class="toolbar">
+          <input id="search" class="input" type="search" placeholder="Поиск задач…" title="Фильтр по названию, описанию и тегам">
+          <select id="priority-filter" class="input" title="Фильтр по приоритету">
+            <option value="">Все приоритеты</option>
+            <option value="urgent">🔴 Срочный</option>
+            <option value="high">🟠 Высокий</option>
+            <option value="medium">🟡 Средний</option>
+            <option value="low">🟢 Низкий</option>
+          </select>
+          <button id="stats-btn" class="btn ghost" title="Статистика доски">📊 Статистика</button>
+          <button id="add-column-btn" class="btn ghost" title="Добавить колонку">＋ Колонка</button>
+          <button id="add-task-btn" class="btn primary" title="Добавить задачу">＋ Задача</button>
+        </div>
+      </header>
+
+      <div id="stats-bar" class="stats-bar" hidden></div>
+
+      <div id="columns" class="columns"></div>
+
+      <div id="empty-state" class="empty" hidden>
+        <div class="empty-icon">🗒️</div>
+        <p>Нет досок. Создайте первую кнопкой «Новая доска».</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- ================= TASK MODAL ================= -->
+  <div id="task-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2 id="task-modal-title">Новая задача</h2>
+        <button class="icon-btn" data-close>✕</button>
+      </div>
+      <form id="task-form">
+        <label>Название
+          <input name="title" required maxlength="200" placeholder="Что нужно сделать?">
+        </label>
+        <label>Описание
+          <textarea name="description" rows="4" maxlength="5000"
+                    placeholder="Детали, ссылки, критерии готовности"></textarea>
+        </label>
+        <div class="grid-2">
+          <label>Приоритет
+            <select name="priority">
+              <option value="low">🟢 Низкий</option>
+              <option value="medium" selected>🟡 Средний</option>
+              <option value="high">🟠 Высокий</option>
+              <option value="urgent">🔴 Срочный</option>
+            </select>
+          </label>
+          <label>Срок
+            <input name="due_date" type="date">
+          </label>
+        </div>
+        <div class="grid-2">
+          <label>Колонка
+            <select name="column_id"></select>
+          </label>
+          <label>Теги <span class="muted">(через запятую)</span>
+            <input name="tags" placeholder="backend, bug">
+          </label>
+        </div>
+        <p id="task-error" class="error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" id="task-delete" class="btn danger" hidden>Удалить</button>
+          <span class="spacer"></span>
+          <button type="button" data-close class="btn ghost">Отмена</button>
+          <button type="submit" class="btn primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ================= STATS MODAL ================= -->
+  <div id="stats-modal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Статистика доски</h2>
+        <button class="icon-btn" data-close>✕</button>
+      </div>
+      <div id="stats-content"></div>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button type="button" data-close class="btn ghost">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

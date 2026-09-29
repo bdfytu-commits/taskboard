@@ -1,0 +1,12 @@
+{
+  "name": "taskboard-ui-tests",
+  "private": true,
+  "type": "module",
+  "description": "E2E-тесты интерфейса TaskBoard (Playwright)",
+  "scripts": {
+    "test": "bash tests/ui/run.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
